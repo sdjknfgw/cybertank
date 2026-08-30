@@ -1,0 +1,19 @@
+# Git portable
+/git-portable/
+/git-portable.zip
+
+# IDE / Trae
+/.trae/
+/.workbuddy/
+
+# Edge debug cache
+/.edge-debug/
+
+# Build outputs (keep source)
+/build/
+/dist/
+/outputs/
+
+# OS
+Thumbs.db
+.DS_Store

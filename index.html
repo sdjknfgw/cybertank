@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CyberTank 赛博坦克大战</title>
+    <!-- 站点图标（内联 SVG，避免 favicon.ico 404） -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230a0e1a'/%3E%3Crect x='14' y='30' width='36' height='18' rx='4' fill='%2300e5ff'/%3E%3Crect x='24' y='18' width='16' height='12' rx='3' fill='%23ff2a9d'/%3E%3Crect x='38' y='21' width='16' height='5' rx='2' fill='%23ffd700'/%3E%3C/svg%3E">
+    <!-- ===== Tailwind CSS 3 CDN ===== -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'neon-cyan': 'var(--neon-cyan)',
+                        'neon-magenta': 'var(--neon-magenta)',
+                        'neon-gold': 'var(--coin-gold)',
+                        'bg-deep': 'var(--bg-deep)',
+                        'bg-panel': 'var(--panel-bg)',
+                        'text-hi': 'var(--text-hi)',
+                        'text-mid': 'var(--text-mid)',
+                        'text-lo': 'var(--text-lo)',
+                    },
+                    fontFamily: {
+                        'sans': ['Plus Jakarta Sans', 'PingFang SC', 'system-ui', 'sans-serif'],
+                        'mono': ['JetBrains Mono', 'Share Tech Mono', 'monospace'],
+                        'tech': ['Share Tech Mono', 'monospace'],
+                    },
+                    animation: {
+                        'fadeIn': 'fadeIn 0.4s ease-out both',
+                        'scaleIn': 'scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both',
+                        'scanLine': 'scanLine 4s linear infinite',
+                        'coinPulse': 'coinPulse 1.2s ease-in-out infinite',
+                        'timerPulse': 'timerPulse 1s ease-in-out infinite',
+                        'shake': 'shake 0.4s ease-in-out',
+                        'blink': 'blink 1.2s ease-in-out infinite',
+                        'floatY': 'floatY 2.4s ease-in-out infinite',
+                        'shine': 'shine 2.2s linear infinite',
+                        'scalePulse': 'scalePulse 1.8s ease-in-out infinite',
+                    },
+                    keyframes: {
+                        fadeIn: { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
+                        scaleIn: { '0%': { transform: 'scale(0.85)', opacity: '0' }, '100%': { transform: 'scale(1)', opacity: '1' } },
+                        scanLine: {
+                            '0%': { transform: 'translateY(-100%)' },
+                            '100%': { transform: 'translateY(100vh)' }
+                        },
+                        coinPulse: {
+                            '0%,100%': { transform: 'scale(1)', filter: 'brightness(1)' },
+                            '50%': { transform: 'scale(1.08)', filter: 'brightness(1.4)' }
+                        },
+                        timerPulse: {
+                            '0%,100%': { color: 'var(--text-hi)' },
+                            '50%': { color: 'var(--neon-magenta)', textShadow: '0 0 10px var(--neon-magenta)' }
+                        },
+                        blink: { '0%,100%': { opacity: '1' }, '50%': { opacity: '0.25' } },
+                        floatY: { '0%,100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-6px)' } },
+                        shine: {
+                            '0%': { transform: 'translateX(-120%) skewX(-20deg)' },
+                            '100%': { transform: 'translateX(220%) skewX(-20deg)' }
+                        },
+                        shake: {
+                            '0%,100%': { transform: 'translateX(0)' },
+                            '20%': { transform: 'translateX(-4px)' },
+                            '40%': { transform: 'translateX(4px)' },
+                            '60%': { transform: 'translateX(-3px)' },
+                            '80%': { transform: 'translateX(3px)' }
+                        },
+                        scalePulse: {
+                            '0%,100%': { transform: 'scale(1)' },
+                            '50%': { transform: 'scale(1.05)' }
+                        },
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- ===== Google Fonts ===== -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&family=Share+Tech+Mono&family=JetBrains+Mono:wght@400;700;800&display=swap" rel="stylesheet">
+    <!-- ===== 主样式表 ===== -->
+    <link rel="stylesheet" href="css/style.css">
+    <!-- Lucide Icons：曾从 unpkg CDN 加载，但全项目从未调用（无 data-lucide/createIcons），
+         且会触发 Edge 跟踪防护告警，已移除。如后续需要图标库建议本地化引入。 -->
+</head>
+<body class="bg-[#05070f] text-white overflow-hidden">
+    <!-- ===== 第 1 层：5 个 Canvas 渲染层 ===== -->
+    <canvas id="cv-bg"       class="absolute inset-0 z-0  pointer-events-none"></canvas>
+    <canvas id="cv-obstacle" class="absolute inset-0 z-5  pointer-events-none"></canvas>
+    <canvas id="cv-ground"   class="absolute inset-0 z-10 pointer-events-none"></canvas>
+    <canvas id="cv-bullet"   class="absolute inset-0 z-15 pointer-events-none"></canvas>
+    <canvas id="cv-fx"       class="absolute inset-0 z-20 pointer-events-none"></canvas>
+
+    <!-- ===== 第 2 层：HUD UI 层 ===== -->
+    <div id="hud-layer" class="relative z-30 inset-0 pointer-events-none w-screen h-screen">
+        <!-- 主菜单容器 -->
+        <div id="main-menu-wrap" class="hidden pointer-events-auto"></div>
+        <!-- 战斗 HUD 容器 -->
+        <div id="game-hud-wrap"  class="hidden pointer-events-auto"></div>
+        <!-- 通用模态弹层 -->
+        <div id="modal-root"     class="hidden pointer-events-auto"></div>
+        <!-- Buff 选择 UI -->
+        <div id="buff-ui-root"   class="hidden pointer-events-auto"></div>
+        <!-- 商店 UI -->
+        <div id="shop-ui-root"   class="hidden pointer-events-auto"></div>
+        <!-- 备战阶段 UI -->
+        <div id="prep-ui-root"   class="hidden pointer-events-auto"></div>
+        <!-- 结算界面 UI -->
+        <div id="result-ui-root" class="hidden pointer-events-auto"></div>
+        <!-- 商店购买粒子 Canvas -->
+        <canvas id="shop-fx"     class="hidden absolute inset-0 z-[60] pointer-events-none"></canvas>
+        <!-- Toast 提示容器 -->
+        <div id="toast-root"     class="pointer-events-none absolute top-4 right-4 z-[999] flex flex-col gap-2 w-80 max-w-[90vw]"></div>
+        <!-- 复活倒计时浮层（据点模式无限命，战败后由 HUD 每帧驱动显示） -->
+        <div id="ct-respawn-overlay" class="ct-respawn-overlay" aria-hidden="true">
+            <div class="ct-respawn-label">RESPAWN · 复活中</div>
+            <div class="ct-respawn-num">0.0</div>
+            <div class="ct-respawn-tip">据点争夺 · 无限复活</div>
+        </div>
+        <!-- AI 出场倒计时浮层（战斗开始 5 秒内提示“AI 即将来袭”） -->
+        <div id="ct-ai-warn" class="ct-ai-warn" aria-hidden="true">
+            <div class="ct-ai-warn-title">⚠ AI 即将来袭</div>
+            <div class="ct-ai-warn-num">5.0</div>
+        </div>
+    </div>
+
+    <!-- ===== 第 3 层：移动端控制（Task11 实现） ===== -->
+    <div id="mobile-controls" class="hidden"></div>
+
+    <!-- ===== 30 个脚本按顺序加载 ===== -->
+    <script src="js/utils/storage.js"          onerror="void 0"></script>
+    <script src="js/utils/particles.js"        onerror="void 0"></script>
+    <script src="js/utils/effects.js"          onerror="void 0"></script>
+    <script src="js/game/audio.js"             onerror="void 0"></script>
+    <script src="js/game/physics.js"           onerror="void 0"></script>
+    <script src="js/game/renderer.js"          onerror="void 0"></script>
+    <script src="js/entities/bullet.js"        onerror="void 0"></script>
+    <script src="js/entities/obstacle.js"      onerror="void 0"></script>
+    <script src="js/entities/powerup.js"       onerror="void 0"></script>
+    <script src="js/entities/tank.js"          onerror="void 0"></script>
+    <script src="js/entities/enemy.js"         onerror="void 0"></script>
+    <script src="js/entities/boss.js"          onerror="void 0"></script>
+    <script src="js/game/wave-manager.js"      onerror="void 0"></script>
+    <script src="js/systems/buff.js"           onerror="void 0"></script>
+    <script src="js/systems/shop.js"           onerror="void 0"></script>
+    <script src="js/systems/prep-phase.js"     onerror="void 0"></script>
+    <script src="js/ui/modal.js"               onerror="void 0"></script>
+    <script src="js/ui/menu.js"                onerror="void 0"></script>
+    <script src="js/ui/hud.js"                 onerror="void 0"></script>
+    <script src="js/ui/result.js"              onerror="void 0"></script>
+    <script src="js/ui/buff-ui.js"             onerror="void 0"></script>
+    <script src="js/ui/shop-ui.js"             onerror="void 0"></script>
+    <script src="js/ui/prep-ui.js"             onerror="void 0"></script>
+    <script src="js/game/engine.js"            onerror="void 0"></script>
+    <script src="js/modes/horde.js"            onerror="void 0"></script>
+    <script src="js/modes/battle-royale.js"    onerror="void 0"></script>
+    <script src="js/modes/king-hill.js"        onerror="void 0"></script>
+    <script src="js/modes/duel.js"             onerror="void 0"></script>
+    <script src="js/modes/kingdefend.js"       onerror="void 0"></script>
+    <script src="js/main.js"                   onerror="void 0"></script>
+
+    <!-- ===== 启动脚本（容错） ===== -->
+    <script>
+        window.addEventListener('DOMContentLoaded', function() {
+            if (typeof window.GameBootstrap === 'function') {
+                try { window.GameBootstrap(); }
+                catch (e) { console.error('[CyberTank] Bootstrap failed:', e); }
+            }
+        });
+    </script>
+</body>
+</html>

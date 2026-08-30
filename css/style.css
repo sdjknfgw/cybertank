@@ -1,0 +1,514 @@
+/* ==========================================================
+ * CyberTank 赛博坦克大战 — 全局样式表
+ * 第九章：CSS 变量 / 霓虹预设 / 关键帧 / 响应式 / 商店卡牌
+ * 所有颜色、尺寸、动画统一通过 var() 引用，便于后续 Task 挂接
+ * ========================================================== */
+
+/* ----------------------------------------------------------
+ * 9.1 + 2.1：完整 CSS 令牌（设计令牌）
+ * ---------------------------------------------------------- */
+:root {
+    /* --- 背景层级 --- */
+    --bg-deep:       #05070f;   /* 最深层背景 */
+    --bg-layer-1:    #0a0f1f;   /* 次级背景 */
+    --bg-layer-2:    #101a33;   /* 面板背景 */
+    --panel-bg:      rgba(12, 18, 40, 0.72);  /* 玻璃态面板 */
+    --panel-border:  rgba(0, 229, 255, 0.22); /* 面板边框 */
+
+    /* --- 主色：霓虹双主色 --- */
+    --neon-cyan:      #00e5ff;
+    --neon-cyan-2:    #18ffff;
+    --neon-cyan-soft: rgba(0, 229, 255, 0.18);
+    --neon-magenta:   #ff2bd6;
+    --neon-magenta-2: #ff66e0;
+    --neon-magenta-soft: rgba(255, 43, 214, 0.18);
+
+    /* --- 功能色 --- */
+    --coin-gold:      #ffc93c;   /* 金币 */
+    --hp-red:         #ff4d6d;   /* 血量 */
+    --hp-red-soft:    rgba(255, 77, 109, 0.25);
+    --shield-blue:    #4cc9f0;   /* 护盾 */
+    --shield-blue-soft: rgba(76, 201, 240, 0.22);
+    --energy-green:   #7cf76b;   /* 能量 */
+    --energy-green-soft: rgba(124, 247, 107, 0.22);
+    --danger:         #ff3860;
+    --warning:        #ffb300;
+    --success:        #22c55e;
+
+    /* --- 稀有度（商店 / Buff / 战利品） --- */
+    --rarity-common:      #9ca3af;
+    --rarity-common-bg:   rgba(156, 163, 175, 0.08);
+    --rarity-rare:        #3b82f6;
+    --rarity-rare-bg:     rgba(59, 130, 246, 0.12);
+    --rarity-epic:        #a855f7;
+    --rarity-epic-bg:     rgba(168, 85, 247, 0.14);
+    --rarity-legendary:   #f59e0b;
+    --rarity-legendary-bg: rgba(245, 158, 11, 0.16);
+
+    /* --- 文字层级 --- */
+    --text-hi:       #eef5ff;     /* 最高优先级文字 */
+    --text-mid:      #a9b7d1;     /* 次要文字 */
+    --text-lo:       #6b7a99;     /* 辅助文字 */
+    --text-disable:  #3d4866;     /* 禁用文字 */
+
+    /* --- 商店专用 --- */
+    --shop-card-bg:      rgba(10, 16, 36, 0.78);
+    --shop-card-border:  rgba(0, 229, 255, 0.18);
+    --shop-card-radius:  14px;
+    --shop-btn-radius:   10px;
+    --shop-tag-radius:   999px;
+
+    /* --- 尺寸令牌 --- */
+    --corner-xs:  4px;
+    --corner-sm:  8px;
+    --corner-md:  14px;
+    --corner-lg:  20px;
+    --corner-xl:  28px;
+    --shadow-neon-cyan:  0 0 8px rgba(0,229,255,0.6),  0 0 20px rgba(0,229,255,0.3);
+    --shadow-neon-magenta: 0 0 8px rgba(255,43,214,0.6), 0 0 20px rgba(255,43,214,0.3);
+    --shadow-neon-gold:  0 0 8px rgba(255,201,60,0.6), 0 0 20px rgba(255,201,60,0.3);
+
+    /* --- HUD 令牌 --- */
+    --hud-bar-radius: 6px;
+    --hud-height:     10px;
+    --buff-icon-size: 44px;
+    --scanline-color: rgba(0, 229, 255, 0.07);
+}
+
+/* ----------------------------------------------------------
+ * 全局 reset
+ * ---------------------------------------------------------- */
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; }
+body {
+    background: var(--bg-deep);
+    color: var(--text-hi);
+    font-family: 'Plus Jakarta Sans', 'PingFang SC', system-ui, sans-serif;
+    overflow: hidden;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* 全局扫描线背景（可选被 canvas 覆盖） */
+body::before {
+    content: '';
+    position: fixed; inset: 0; z-index: 1;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+        0deg,
+        transparent 0px, transparent 3px,
+        var(--scanline-color) 3px, var(--scanline-color) 4px
+    );
+    mix-blend-mode: overlay;
+    opacity: 0.6;
+}
+
+/* ----------------------------------------------------------
+ * 发光预设类（box-shadow / text-shadow）
+ * ---------------------------------------------------------- */
+.glow-cyan-sm   { box-shadow: 0 0 6px  rgba(0,229,255,0.5); }
+.glow-cyan-md   { box-shadow: 0 0 10px rgba(0,229,255,0.6), 0 0 24px rgba(0,229,255,0.28); }
+.glow-cyan-lg   { box-shadow: 0 0 16px rgba(0,229,255,0.75), 0 0 40px rgba(0,229,255,0.38), inset 0 0 12px rgba(0,229,255,0.18); }
+
+.glow-magenta-sm{ box-shadow: 0 0 6px  rgba(255,43,214,0.5); }
+.glow-magenta-md{ box-shadow: 0 0 10px rgba(255,43,214,0.6), 0 0 24px rgba(255,43,214,0.28); }
+.glow-magenta-lg{ box-shadow: 0 0 16px rgba(255,43,214,0.75), 0 0 40px rgba(255,43,214,0.38), inset 0 0 12px rgba(255,43,214,0.18); }
+
+.text-glow-cyan    { color: var(--neon-cyan);    text-shadow: 0 0 6px rgba(0,229,255,0.8), 0 0 14px rgba(0,229,255,0.4); }
+.text-glow-magenta { color: var(--neon-magenta); text-shadow: 0 0 6px rgba(255,43,214,0.8), 0 0 14px rgba(255,43,214,0.4); }
+.text-glow-gold    { color: var(--coin-gold);    text-shadow: 0 0 6px rgba(255,201,60,0.85), 0 0 14px rgba(255,201,60,0.42); }
+
+/* ----------------------------------------------------------
+ * 霓虹按钮基类 .neon-btn
+ * ---------------------------------------------------------- */
+.neon-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 22px;
+    min-height: 44px;
+    border-radius: var(--corner-sm);
+    background: linear-gradient(135deg, rgba(0,229,255,0.10), rgba(255,43,214,0.08));
+    border: 1px solid var(--panel-border);
+    color: var(--text-hi);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: transform 150ms ease, box-shadow 200ms ease, border-color 200ms ease, background 200ms ease;
+    overflow: hidden;
+}
+.neon-btn::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent);
+    transform: translateX(-120%) skewX(-20deg);
+    transition: transform 600ms ease;
+}
+.neon-btn:hover {
+    transform: translateY(-1px);
+    border-color: var(--neon-cyan);
+    box-shadow: var(--shadow-neon-cyan);
+}
+.neon-btn:hover::after { transform: translateX(220%) skewX(-20deg); }
+.neon-btn:active { transform: scale(0.96); }
+.neon-btn:disabled, .neon-btn[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none !important;
+    box-shadow: none !important;
+}
+.neon-btn.btn-magenta {
+    background: linear-gradient(135deg, rgba(255,43,214,0.14), rgba(0,229,255,0.06));
+}
+.neon-btn.btn-magenta:hover { border-color: var(--neon-magenta); box-shadow: var(--shadow-neon-magenta); }
+.neon-btn.btn-gold {
+    background: linear-gradient(135deg, rgba(255,201,60,0.16), rgba(255,120,80,0.08));
+}
+.neon-btn.btn-gold:hover { border-color: var(--coin-gold); box-shadow: var(--shadow-neon-gold); }
+
+/* ----------------------------------------------------------
+ * 面板基类 .neon-panel（玻璃态 + 四角装饰）
+ * ---------------------------------------------------------- */
+.neon-panel {
+    position: relative;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: var(--corner-md);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.04);
+    padding: 20px;
+}
+/* 四角装饰：::before 左上+右下，::after 右上+左下 */
+.neon-panel::before,
+.neon-panel::after {
+    content: '';
+    position: absolute;
+    width: 18px; height: 18px;
+    border-color: var(--neon-cyan);
+    border-style: solid;
+    pointer-events: none;
+    filter: drop-shadow(0 0 4px rgba(0,229,255,0.7));
+}
+.neon-panel::before {
+    top: -1px; left: -1px;
+    border-width: 2px 0 0 2px;
+    border-top-left-radius: var(--corner-md);
+}
+.neon-panel::after {
+    bottom: -1px; right: -1px;
+    border-width: 0 2px 2px 0;
+    border-bottom-right-radius: var(--corner-md);
+}
+/* 可切换品红装饰 */
+.neon-panel.panel-magenta::before,
+.neon-panel.panel-magenta::after {
+    border-color: var(--neon-magenta);
+    filter: drop-shadow(0 0 4px rgba(255,43,214,0.7));
+}
+
+/* ----------------------------------------------------------
+ * 关键帧 @keyframes
+ * ---------------------------------------------------------- */
+@keyframes fadeIn {
+    0%   { opacity: 0; }
+    100% { opacity: 1; }
+}
+@keyframes scaleIn {
+    0%   { transform: scale(0.85); opacity: 0; }
+    100% { transform: scale(1);    opacity: 1; }
+}
+@keyframes scanLine {
+    0%   { transform: translateY(-100%); }
+    100% { transform: translateY(100vh); }
+}
+@keyframes coinPulse {
+    0%,100% { transform: scale(1);      filter: brightness(1); }
+    50%     { transform: scale(1.08);   filter: brightness(1.4); }
+}
+@keyframes timerPulse {
+    0%,100% { color: var(--text-hi); }
+    50%     { color: var(--neon-magenta); text-shadow: 0 0 10px var(--neon-magenta); }
+}
+@keyframes blink {
+    0%,100% { opacity: 1; }
+    50%     { opacity: 0.25; }
+}
+@keyframes floatY {
+    0%,100% { transform: translateY(0); }
+    50%     { transform: translateY(-6px); }
+}
+@keyframes shine {
+    0%   { transform: translateX(-120%) skewX(-20deg); }
+    100% { transform: translateX(220%)  skewX(-20deg); }
+}
+@keyframes shake {
+    0%,100% { transform: translateX(0); }
+    20%     { transform: translateX(-4px); }
+    40%     { transform: translateX(4px); }
+    60%     { transform: translateX(-3px); }
+    80%     { transform: translateX(3px); }
+}
+@keyframes scalePulse {
+    0%,100% { transform: scale(1); }
+    50%     { transform: scale(1.05); }
+}
+@keyframes glitchDisplace {
+    0%   { transform: translate(0);   filter: hue-rotate(0deg); }
+    20%  { transform: translate(-2px,1px); filter: hue-rotate(10deg); }
+    40%  { transform: translate(2px,-1px); filter: hue-rotate(-10deg); }
+    60%  { transform: translate(-1px,-2px); }
+    80%  { transform: translate(1px,2px); }
+    100% { transform: translate(0);   filter: hue-rotate(0deg); }
+}
+
+/* 关键帧使用类（Tailwind animation 字段里也已声明同名） */
+.anim-fadeIn      { animation: fadeIn 0.4s ease-out both; }
+.anim-scaleIn     { animation: scaleIn 0.3s cubic-bezier(0.34,1.56,0.64,1) both; }
+.anim-scanLine    { animation: scanLine 4s linear infinite; }
+.anim-coinPulse   { animation: coinPulse 1.2s ease-in-out infinite; }
+.anim-timerPulse  { animation: timerPulse 1s ease-in-out infinite; }
+.anim-blink       { animation: blink 1.2s ease-in-out infinite; }
+.anim-floatY      { animation: floatY 2.4s ease-in-out infinite; }
+.anim-shine       { animation: shine 2.2s linear infinite; }
+.anim-shake       { animation: shake 0.4s ease-in-out; }
+.anim-scalePulse  { animation: scalePulse 1.8s ease-in-out infinite; }
+.anim-glitch      { animation: glitchDisplace 0.5s steps(2) infinite; }
+
+/* ----------------------------------------------------------
+ * 售罄印章 .sold-out-stamp
+ * ---------------------------------------------------------- */
+.sold-out-stamp {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) rotate(-12deg);
+    padding: 8px 18px;
+    border: 3px solid #6b7280;
+    color: #6b7280;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 800;
+    font-size: 22px;
+    letter-spacing: 0.1em;
+    border-radius: 6px;
+    opacity: 0.85;
+    pointer-events: none;
+    background: rgba(30, 41, 59, 0.45);
+    text-shadow: 0 1px 0 rgba(0,0,0,0.4);
+}
+
+/* ----------------------------------------------------------
+ * 飘字 .damage-text
+ * ---------------------------------------------------------- */
+.damage-text {
+    position: absolute;
+    pointer-events: none;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 800;
+    font-size: 18px;
+    white-space: nowrap;
+    animation: dmgFloat 0.8s ease-out forwards;
+    text-shadow: 0 0 6px currentColor, 0 2px 4px rgba(0,0,0,0.8);
+}
+@keyframes dmgFloat {
+    0%   { transform: translateY(0)     scale(0.8); opacity: 0; }
+    15%  { transform: translateY(-6px)  scale(1.1); opacity: 1; }
+    100% { transform: translateY(-46px) scale(1);   opacity: 0; }
+}
+.damage-text.dmg-crit { font-size: 24px; color: var(--neon-magenta); }
+.damage-text.dmg-hp   { color: var(--hp-red); }
+.damage-text.dmg-heal { color: var(--energy-green); }
+.damage-text.dmg-coin { color: var(--coin-gold); }
+
+/* ----------------------------------------------------------
+ * 全息斜条纹 .hologram
+ * ---------------------------------------------------------- */
+.hologram {
+    background-image: repeating-linear-gradient(
+        45deg,
+        rgba(0, 229, 255, 0.10) 0px,
+        rgba(0, 229, 255, 0.10) 6px,
+        rgba(255, 43, 214, 0.08) 6px,
+        rgba(255, 43, 214, 0.08) 12px
+    );
+    background-size: 200% 200%;
+    animation: holoShift 6s linear infinite;
+}
+@keyframes holoShift {
+    0%   { background-position: 0% 0%; }
+    100% { background-position: 200% 200%; }
+}
+
+/* ----------------------------------------------------------
+ * 商店卡牌 4 稀有度基类
+ * ---------------------------------------------------------- */
+.card-common, .card-rare, .card-epic, .card-legendary {
+    position: relative;
+    border-radius: var(--shop-card-radius);
+    padding: 14px;
+    background: var(--shop-card-bg);
+    border: 1px solid var(--shop-card-border);
+    transition: transform 200ms ease, box-shadow 220ms ease, border-color 200ms ease;
+    overflow: hidden;
+}
+.card-common     { border-color: var(--rarity-common);    background: linear-gradient(180deg, var(--rarity-common-bg),    var(--shop-card-bg)); box-shadow: 0 0 0 1px rgba(156,163,175,0.25); }
+.card-rare       { border-color: var(--rarity-rare);      background: linear-gradient(180deg, var(--rarity-rare-bg),      var(--shop-card-bg)); box-shadow: 0 0 10px rgba(59,130,246,0.30), inset 0 0 14px rgba(59,130,246,0.08); }
+.card-epic       { border-color: var(--rarity-epic);      background: linear-gradient(180deg, var(--rarity-epic-bg),      var(--shop-card-bg)); box-shadow: 0 0 14px rgba(168,85,247,0.36), inset 0 0 16px rgba(168,85,247,0.10); }
+.card-legendary  { border-color: var(--rarity-legendary); background: linear-gradient(180deg, var(--rarity-legendary-bg), var(--shop-card-bg)); box-shadow: 0 0 18px rgba(245,158,11,0.42), inset 0 0 18px rgba(245,158,11,0.12); }
+
+.card-common:hover,
+.card-rare:hover,
+.card-epic:hover,
+.card-legendary:hover {
+    transform: translateY(-3px);
+}
+.card-rare:hover      { box-shadow: 0 0 16px rgba(59,130,246,0.55),  inset 0 0 18px rgba(59,130,246,0.14); }
+.card-epic:hover      { box-shadow: 0 0 20px rgba(168,85,247,0.60),  inset 0 0 20px rgba(168,85,247,0.18); }
+.card-legendary:hover { box-shadow: 0 0 26px rgba(245,158,11,0.68),  inset 0 0 22px rgba(245,158,11,0.22); }
+
+/* ----------------------------------------------------------
+ * 响应式三断点：<1080 / <768 / <480
+ * ---------------------------------------------------------- */
+/* 断点 1：< 1080px */
+@media (max-width: 1080px) {
+    .hide-md { display: none !important; }
+    .grid-cols-shop { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+}
+/* 断点 2：< 768px（平板/小屏） */
+@media (max-width: 768px) {
+    .hide-sm { display: none !important; }
+    .grid-cols-shop { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+    .neon-panel { padding: 14px; border-radius: var(--corner-sm); }
+    .neon-btn { padding: 8px 16px; min-height: 40px; }
+}
+/* 断点 3：< 480px（手机） */
+@media (max-width: 480px) {
+    .hide-xs { display: none !important; }
+    .grid-cols-shop { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 10px !important; }
+    :root { --corner-md: 12px; }
+}
+
+/* ----------------------------------------------------------
+ * 辅助工具类（和 Tailwind 互补）
+ * ---------------------------------------------------------- */
+.hidden { display: none !important; }
+.pointer-events-auto { pointer-events: auto; }
+.pointer-events-none { pointer-events: none; }
+.inset-0 { top: 0; right: 0; bottom: 0; left: 0; }
+.absolute { position: absolute; }
+.relative { position: relative; }
+.fixed    { position: fixed; }
+.w-screen { width: 100vw; }
+.h-screen { height: 100vh; }
+.w-full   { width: 100%; }
+.h-full   { height: 100%; }
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.items-center { align-items: center; }
+.justify-center { justify-content: center; }
+.justify-between { justify-content: space-between; }
+.gap-2 { gap: 8px; }
+.gap-4 { gap: 16px; }
+.top-4 { top: 16px; }
+.right-4 { right: 16px; }
+.z-\[60\] { z-index: 60; }
+.z-\[999\] { z-index: 999; }
+
+/* ----------------------------------------------------------
+ * 复活倒计时浮层（据点模式无限命，战败后显示）
+ * 由 HUD.init 注册的独立每帧 update 监听驱动，不依赖 fx 渲染回调，
+ * 确保玩家阵亡后一定弹出半透明倒计时面板而非卡死。
+ * ---------------------------------------------------------- */
+.ct-respawn-overlay {
+  position: fixed;
+  left: 50%;
+  top: 38%;
+  transform: translate(-50%, -50%);
+  z-index: 600;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 18px 56px;
+  border-radius: 18px;
+  background: rgba(10, 14, 30, 0.55);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 56, 96, 0.7);
+  box-shadow: 0 0 26px rgba(255, 56, 96, 0.45), inset 0 0 18px rgba(255, 56, 96, 0.12);
+  font-family: "Share Tech Mono", monospace;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .18s ease;
+}
+.ct-respawn-overlay.is-show { opacity: 1; }
+.ct-respawn-overlay .ct-respawn-label {
+  font-size: 13px;
+  letter-spacing: .35em;
+  color: #ff9db0;
+}
+.ct-respawn-overlay .ct-respawn-num {
+  font-size: 52px;
+  font-weight: 700;
+  line-height: 1.05;
+  color: #ff6b88;
+  text-shadow: 0 0 16px rgba(255, 56, 96, .9);
+}
+.ct-respawn-overlay .ct-respawn-tip {
+  font-size: 12px;
+  letter-spacing: .15em;
+  color: #ffb3c0;
+  opacity: .85;
+}
+
+/* AI 出场倒计时横幅（战斗开始前 5 秒提示“AI 即将来袭”） */
+.ct-ai-warn {
+  position: fixed;
+  left: 50%;
+  top: 14%;
+  transform: translate(-50%, -50%);
+  z-index: 600;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 14px 40px;
+  border-radius: 14px;
+  background: rgba(40, 10, 14, 0.55);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 122, 26, 0.7);
+  box-shadow: 0 0 26px rgba(255, 90, 26, 0.45), inset 0 0 18px rgba(255, 90, 26, 0.12);
+  font-family: "Share Tech Mono", monospace;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .18s ease;
+}
+.ct-ai-warn.is-show { display: flex; opacity: 1; animation: aiWarnPulse 0.9s ease-in-out infinite; }
+@keyframes aiWarnPulse {
+  0%, 100% { box-shadow: 0 0 22px rgba(255, 90, 26, 0.35), inset 0 0 14px rgba(255, 90, 26, 0.1); }
+  50% { box-shadow: 0 0 34px rgba(255, 60, 26, 0.7), inset 0 0 22px rgba(255, 60, 26, 0.2); }
+}
+.ct-ai-warn .ct-ai-warn-title {
+  font-size: 15px;
+  letter-spacing: .25em;
+  color: #ffb347;
+  text-shadow: 0 0 10px rgba(255, 122, 26, .8);
+}
+.ct-ai-warn .ct-ai-warn-num {
+  font-size: 46px;
+  font-weight: 700;
+  line-height: 1.05;
+  color: #ff7a3c;
+  text-shadow: 0 0 16px rgba(255, 90, 26, .9);
+}
