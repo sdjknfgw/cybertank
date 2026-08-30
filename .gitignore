@@ -9,10 +9,17 @@
 # Edge debug cache
 /.edge-debug/
 
+# Node dependencies (not needed for static site)
+node_modules/
+.build/node_modules/
+
 # Build outputs (keep source)
 /build/
 /dist/
 /outputs/
+
+# Temp deploy files
+upload-to-github.ps1
 
 # OS
 Thumbs.db
