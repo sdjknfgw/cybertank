@@ -180,27 +180,9 @@
         });
         player.coins = 100;
 
-        // 玩家先入场；20 辆 AI 在战斗开始 5 秒后生成（其余模式统一出兵延迟）
+        // 玩家先入场；20 辆 AI 由 tick 以「游戏时间」驱动生成（见 _spawnAI / tick 中的 spawnDelay），
+        // 不再用 wall-clock setTimeout：切后台 / 重开时 setTimeout 可能被吞或错位，导致「AI 有时不生成」。
         const tanks = [player];
-        const self = this;
-        setTimeout(() => {
-          if (!self.running || !self.state) return;
-          const st = self.state;
-          const ranks = ['normal','normal','fast','elite'];
-          const colors = ['#ff4d6d','#00e5ff','#7cff6b','#ffd166','#ff9f1c','#c77dff','#90e0ef'];
-          for (let i = 0; i < 20; i++) {
-            const aiSp = randomSafeSpawnPoint(used, 180, st.obstacles);
-            const rank = i < 3 ? 'elite' : (i < 8 ? 'fast' : 'normal');
-            try {
-              const ai = new EnemyCtor({ x: aiSp.x, y: aiSp.y, rank, wave: 5, type: 'enemy' });
-              if (ai) { ai.color = colors[i % colors.length]; ai.rank = rank; st.tanks.push(ai); }
-            } catch (_) {
-              const stub = new TankCtor({ x: aiSp.x, y: aiSp.y, type: 'enemy' });
-              stub.rank = rank; stub.color = colors[i % colors.length];
-              st.tanks.push(stub);
-            }
-          }
-        }, 5000);
 
         // 6 个商店终端：四角 + 中轴 2 个
         const term = [
@@ -212,18 +194,20 @@
           { x: MAP_W / 2 - 40, y: MAP_H - 380, w: 80, h: 80, cool: 0 },
         ];
 
-        // 安全圈：初始 1200 半径，中心随机
-        const zc = { x: MAP_W / 2 + (Math.random() - 0.5) * 600, y: MAP_H / 2 + (Math.random() - 0.5) * 600 };
+        // 安全圈：圈心固定地图中心，初始半径覆盖全图 → 开局任何出生点都在圈内，
+        // 杜绝「玩家出生点恰好在圈外、每帧被扣 1 HP 却不知原因」的异常掉血。
+        const ZONE_R0 = Math.hypot(MAP_W, MAP_H) / 2 + 120;
+        const zc = { x: MAP_W / 2, y: MAP_H / 2 };
         this.state = {
           mode: 'br',
           phase: 'COMBAT',
           aliveCount: tanks.length,
           zone: {
-            /* 初始半径随地图同比放大：2560→3072，1200→1440（保持原有覆盖比例） */
-            x: zc.x, y: zc.y, radius: 1440,
-            nextRadius: 1440, targetRadius: 1440,
+            /* 初始半径覆盖整张地图（含四角），随后按 0.8 倍逐级收缩 */
+            x: zc.x, y: zc.y, radius: ZONE_R0,
+            nextRadius: ZONE_R0, targetRadius: ZONE_R0,
             shrinkTime: SHRINK_INTERVAL, transitionT: 0,
-            startRadius: 1440
+            startRadius: ZONE_R0
           },
           shopTerminals: term,
           kills: 0,
@@ -231,6 +215,10 @@
           totalPlayers: 21,
           /* 其余模式统一：开局 5 秒宽限期，期间不生成 AI、不触发胜负判定 */
           graceT: 5,
+          /* 游戏时间驱动的 AI 出兵：spawnDelay 倒计时归零后由 _spawnAI 一次性生成 20 辆 */
+          spawnDelay: 5,
+          aiSpawned: false,
+          _used: used,
           surviveTime: 0,
           obstacles: mapInfo.obstacles, bullets: [], powerups: [],
           pupTimer: PUP_FIRST,
@@ -291,6 +279,11 @@
       this._tickZone(dt);
       /* 开局 5 秒宽限期倒计时 */
       if ((s.graceT || 0) > 0) s.graceT = Math.max(0, s.graceT - dt);
+      /* 游戏时间驱动 AI 出兵：替代原 wall-clock setTimeout，切后台/重开都不会漏生成 */
+      if (!s.aiSpawned) {
+        s.spawnDelay = (s.spawnDelay == null ? 5 : s.spawnDelay) - dt;
+        if (s.spawnDelay <= 0) this._spawnAI(s);
+      }
       /* 存活时长累计（用于结算与评级完成度） */
       if (s.phase === 'COMBAT') s.surviveTime = (s.surviveTime || 0) + dt;
 
@@ -357,10 +350,13 @@
 
       this._cleanupDeadEntities();
 
-      // 结束判定（宽限期内不触发，避免 AI 尚未生成就误判胜负）
+      // 结束判定（宽限期内不触发；且必须等 AI 已生成，避免「AI 漏生成 → 只剩玩家 → 误判胜利」）
+      /* 兜底：宽限结束却仍无 AI（极端异常），先补生成，再统计存活数，
+       * 否则会用「补生成前」的 stale aliveCount=1 误判胜利 */
+      if ((s.graceT || 0) <= 0 && !s.aiSpawned) this._spawnAI(s);
       const alive = s.tanks.filter(t => t && t.alive);
       s.aliveCount = alive.length;
-      if ((s.graceT || 0) <= 0 && s.aliveCount <= 1) {
+      if ((s.graceT || 0) <= 0 && s.aiSpawned && s.aliveCount <= 1) {
         const playerAlive = s.player.alive && s.player.hp > 0;
         this._gameOver(playerAlive);
       }
@@ -369,6 +365,31 @@
       if (this._nearTerminal && (INPUT.isDown && INPUT.isDown('f')) || (INPUT.keys && INPUT.keys.has('f'))) {
         this._openShop(this._nearTerminal);
       }
+    },
+
+    /* 一次性生成全部 AI 坦克（游戏时间驱动，稳定可靠）。
+     * 此前用 wall-clock setTimeout(5000) 在切后台/重开时会被吞或错位，导致「AI 有时不生成」；
+     * 现改为由 tick 的 spawnDelay 倒计时触发，只要 running 且 state 在，必执行。 */
+    _spawnAI(st) {
+      if (!st || st.aiSpawned) return;
+      const colors = ['#ff4d6d', '#00e5ff', '#7cff6b', '#ffd166', '#ff9f1c', '#c77dff', '#90e0ef'];
+      let spawned = 0;
+      for (let i = 0; i < 20; i++) {
+        let aiSp = null;
+        try { aiSp = randomSafeSpawnPoint(st._used || [], 180, st.obstacles); } catch (_) { aiSp = { x: MAP_W / 2, y: MAP_H / 2 }; }
+        const rank = i < 3 ? 'elite' : (i < 8 ? 'fast' : 'normal');
+        let ai = null;
+        try { ai = new EnemyCtor({ x: aiSp.x, y: aiSp.y, rank, wave: 5, type: 'enemy' }); } catch (_) { ai = null; }
+        /* 构造器可能返回 falsy（某些 EnemyAI 校验失败）→ 退回基础 Tank，绝不放空 */
+        if (!ai) ai = new TankCtor({ x: aiSp.x, y: aiSp.y, type: 'enemy' });
+        ai.color = colors[i % colors.length];
+        ai.rank = rank;
+        if (ai.type !== 'enemy') ai.type = 'enemy';
+        st.tanks.push(ai);
+        spawned++;
+      }
+      st.aiSpawned = true;
+      BUS.emit('br:aiSpawned', { count: spawned });
     },
 
     _tickZone(dt) {
@@ -394,19 +415,20 @@
       }
     },
 
-    _zoneDmgAcc: 0,
     _damageOutsideZone(dt) {
       const s = this.state; if (!s) return;
+      /* 宽限期内为安全期，圈外不掉血（否则开局玩家可能因出生点偏角而被圈外扣血，表现为「无故掉血」） */
+      if ((s.graceT || 0) > 0) return;
       const z = s.zone;
       const tanks = s.tanks;
       for (let i = 0; i < tanks.length; i++) {
         const t = tanks[i]; if (!t || !t.alive) continue;
         const dx = (t.pos.x) - z.x, dy = (t.pos.y) - z.y;
         if (dx * dx + dy * dy > z.radius * z.radius) {
-          // 每秒 1 HP
-          this._zoneDmgAcc += dt;
-          while (this._zoneDmgAcc >= 1) {
-            this._zoneDmgAcc -= 1;
+          // 每秒 1 HP；per-tank 累加器，避免多坦克共用一个累加器使掉血速率随人数错乱
+          t._zoneAcc = (t._zoneAcc || 0) + dt;
+          while (t._zoneAcc >= 1) {
+            t._zoneAcc -= 1;
             if (t.takeDamage) try { t.takeDamage(1); } catch (_) { t.hp -= 1; }
             else t.hp -= 1;
             BUS.emit('br:zoneDamage', { target: t });
@@ -415,6 +437,8 @@
               BUS.emit('tank:dead', { dead: t, killer: 'zone', rank: t.rank });
             }
           }
+        } else {
+          t._zoneAcc = 0; // 回到圈内清零，避免残留累加在下次出圈时一次性扣除
         }
       }
     },
