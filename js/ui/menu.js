@@ -882,7 +882,7 @@
         const container = fb.inner;
 
         container.appendChild(h('h2', 'font-tech text-[2rem] text-glow-cyan tracking-widest mb-1', '联机对战 1v1'));
-        container.appendChild(h('div', 'text-text-lo text-xs font-mono mb-2', 'ONLINE · 需先启动 online/server.js（默认 http://localhost:3000）'));
+        container.appendChild(h('div', 'text-text-lo text-xs font-mono mb-2', 'ONLINE · P2P 直连（WebRTC），无需额外服务器，双人浏览器实时对战'));
         container.appendChild(h('div', 'text-text-mid text-sm mb-6', '已选坦克：' + tankById(_state.tank).name + '（可在上一步的「坦克工坊」更换）'));
 
         const panel = h('div', 'neon-panel flex flex-col gap-4 items-stretch', '');

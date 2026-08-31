@@ -1,31 +1,30 @@
 /* =========================================================
- * CyberTank · 联机 1v1 模式（嫁接版）
+ * CyberTank · 联机 1v1 模式（嫁接版 · P2P 直连）
  * 命名空间: window.CT_MODE_ONLINE
  *
- * 设计（与「示例页」共用同一套服务端 server.js）：
- *   - 服务端权威：本模块【不跑任何物理】，只做两件事：
- *       1) 把本地按键/鼠标 → 发给服务端（input 事件）
- *       2) 把服务端快照 snapshot → 同步到两个「木偶 Tank」并渲染
- *   - 复用原版 Tank 实体（CT_TANK.Tank）的 render()，美术/手感完全一致，
- *     仅把 pos/angle/turretAngle/hp/shield/alive 每帧从快照覆写。
- *   - 引擎层：注册一个 update 钩子（驱动同步+发送）与一个 fx 层 render 钩子
- *     （画竞技场+坦克+子弹+比分），两者都用 active 开关自保活，停止即不渲染。
- *   - socket.io 客户端按需从联机服务动态加载，URL 由 window.CT_NET_URL 指定
- *     （默认 http://localhost:3000）。
+ * 架构（静态托管可联机，GitHub Pages 直接可用）：
+ *   - 传输层：PeerJS（WebRTC DataChannel，公共信令免费、无自建服务器）
+ *   - 权威模拟：跑在「建房者」浏览器里（js/modes/online-host.js，
+ *     由 online/server.js 移植），房主本地直接驱动，快照 30Hz 发给对手
+ *   - 双方职责：
+ *       房主(guest 连入)：收对手 input → 跑模拟 → 发 snapshot/事件
+ *       对手(guest)：只发 input、收 snapshot/事件并渲染
+ *   - 事件与旧 socket.io 版完全同构（roomCreated/matchStart/mapInit/
+ *     snapshot/sfx/roundEnd/matchEnd/opponentLeft…），渲染层零改动。
+ *   - 快速匹配：约定固定大厅 PeerID，先到者占位等待，后来者直连。
  * ========================================================= */
 (function (global) {
   'use strict';
 
-  // 必须与 server.js 的地图尺寸一致（坐标系对齐）；mapInit 到达后会被覆盖为真实尺寸
+  // 必须与 online-host.js 的地图尺寸一致（坐标系对齐）；mapInit 到达后会被覆盖为真实尺寸
   var ARENA = { w: 640, h: 640 };
 
   var NS = {};
   var active = false;       // 整个模式是否激活
   var started = false;      // 是否已进入对战（matchStart 之后）
-  var socket = null;
   var mySlot = null;        // 0 或 1
   var roomId = null;
-  var latest = null;        // 最近一次服务端快照
+  var latest = null;        // 最近一次快照（房主=本地模拟产物，对手=网络快照）
   var puppets = [null, null]; // 两个木偶 Tank（仅用于渲染）
   var lastInputT = 0;
   var lastRect = { left: 0, top: 0 }; // 画布在屏幕上的位置，用于把鼠标换算到竞技场坐标
@@ -37,8 +36,35 @@
   var prevBulletCount = 0;  // 用于开火音效节流
   var lastSfxT = {};        // 各类音效节流时间戳
 
+  /* ---------- P2P 传输状态 ---------- */
+  var peer = null;          // PeerJS 实例
+  var conn = null;          // 与对手的 DataChannel
+  var role = null;          // 'host' | 'guest'
+  var sim = null;           // 房主端的权威模拟（online-host.js Sim）
+  var tickTimer = null;     // 房主 30Hz 模拟定时器
+  var joinWatch = null;     // 对手侧连接超时看门狗
+
+  // PeerID 命名空间（公共信令服务器全局唯一，加游戏前缀防撞）
+  var NS_PREFIX = 'cybertank-1v1-a1-';
+  var LOBBY_PEER_ID = NS_PREFIX + 'lobby'; // 快速匹配大厅
+  // STUN：含国内可达节点，提高 NAT 穿透率
+  var ICE_CONFIG = {
+    iceServers: [
+      { urls: 'stun:stun.cloudflare.com:3478' },
+      { urls: 'stun:global.stun.twilio.com:3478' },
+      { urls: 'stun:stun.l.google.com:19302' },
+    ],
+  };
+
   function toastMsg(m, lv) { try { global.CT_TOAST && global.CT_TOAST(m, lv || 'info'); } catch (e) {} }
-  function netUrl() { return global.CT_NET_URL || 'http://localhost:3000'; }
+  function peerjsUrl() { return global.CT_PEERJS_URL || 'js/lib/peerjs.min.js'; }
+  function peerIdFor(code) { return NS_PREFIX + String(code).toLowerCase(); }
+  function genCode() {
+    var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    var s = '';
+    for (var i = 0; i < 6; i++) s += chars[(Math.random() * chars.length) | 0];
+    return s;
+  }
 
   /* 音效：复用全局 CT_AUDIO（shoot/hit/kill/explode/pickup/ui…）
    * 首屏交互已自动 resume，这里只管触发；对高频音做节流避免叠音爆音。 */
@@ -54,14 +80,14 @@
     try { A.play(type); } catch (e) {}
   }
 
-  /* ---------- 动态加载 socket.io 客户端 ---------- */
-  function ensureSocketIo() {
+  /* ---------- 动态加载 PeerJS 客户端（自托管，静态站点可用） ---------- */
+  function ensurePeerJs() {
     return new Promise(function (resolve, reject) {
-      if (global.io) return resolve(global.io);
+      if (global.Peer) return resolve(global.Peer);
       var s = document.createElement('script');
-      s.src = netUrl() + '/socket.io/socket.io.js';
-      s.onload = function () { global.io ? resolve(global.io) : reject(new Error('socket.io 加载失败')); };
-      s.onerror = function () { reject(new Error('无法加载联机客户端（服务未启动？）')); };
+      s.src = peerjsUrl();
+      s.onload = function () { global.Peer ? resolve(global.Peer) : reject(new Error('PeerJS 加载失败')); };
+      s.onerror = function () { reject(new Error('无法加载联机组件 js/lib/peerjs.min.js')); };
       document.head.appendChild(s);
     });
   }
@@ -91,12 +117,11 @@
     }
   }
 
-  /* ---------- 输入：本地键鼠 → 服务端 input ---------- */
+  /* ---------- 输入：本地键鼠 → 房主模拟 / 发给房主 ---------- */
   function sendInput() {
-    if (!socket || !latest) return;
+    if (!latest) return;
     var IN = global.CT_INPUT;
     var me = latest.tanks[mySlot];
-    // 把鼠标屏幕坐标换算成竞技场世界坐标（与渲染用同一套相机参数）
     var R = global.CT_RENDERER;
     var vp = (R && R.viewport) || { w: 880, h: 600 };
     var W = vp.w, H = vp.h;
@@ -113,11 +138,13 @@
       }
     }
     var snap = IN ? IN.snapshot() : {};
-    // 服务端是 directMove 语义：up/down/left/right 即世界方向，与 CT_INPUT 完全一致
-    socket.emit('input', {
+    // 模拟是 directMove 语义：up/down/left/right 即世界方向，与 CT_INPUT 完全一致
+    var payload = {
       up: !!(snap.up), down: !!(snap.down), left: !!(snap.left), right: !!(snap.right),
       fire: !!(snap.shoot), skill: !!(snap.skill), aim: aim
-    });
+    };
+    if (role === 'host' && sim) sim.setInput(0, payload);      // 房主本地直驱
+    else if (role === 'guest') sendTo({ t: 'input', i: payload }); // 对手上报
   }
 
   /* ---------- 引擎钩子：update（驱动同步 + 按 30Hz 发输入） ---------- */
@@ -280,44 +307,160 @@
     ctx.restore();
   }
 
-  /* ---------- Socket 事件 ---------- */
-  function bindSocket(sock) {
-    sock.on('connect', function () {
-      if (opts.mode === 'join' && opts.roomId) sock.emit('joinRoom', { roomId: opts.roomId });
-      else if (opts.mode === 'match') sock.emit('quickMatch');
-      else sock.emit('createRoom');
-    });
-    sock.on('roomCreated', function (d) { mySlot = d.slot; roomId = d.roomId; toastMsg('房间已创建：' + d.roomId + '（发给好友加入）'); });
-    sock.on('roomJoined', function (d) { mySlot = d.slot; roomId = d.roomId; toastMsg('已加入房间 ' + d.roomId); });
-    sock.on('queued', function (d) { toastMsg('匹配队列中，第 ' + d.position + ' 位…'); });
-    sock.on('peerJoined', function (d) { if (d.count >= 2) toastMsg('对手已加入，即将开始！'); });
-    sock.on('matchStart', function () { started = true; buildPuppets(); playSfx('ui'); });
-    sock.on('snapshot', function (s) {
-      // 砖墙增量更新（brk: 被打掉的砖墙 hp/alive 变化）
-      if (s.brk && s.brk.length) {
-        for (var k = 0; k < s.brk.length; k++) {
-          var u = s.brk[k], o = mapObstacles[u.i];
-          if (o) { o.hp = u.hp; o.alive = u.alive; }
-        }
-      }
-      latest = s;
-    });
-    sock.on('mapInit', function (m) {
-      // 本局地图：障碍全量同步（每局重置后服务端会重发）
-      ARENA = { w: m.w, h: m.h };
-      mapMeta = { w: m.w, h: m.h, tile: m.tile };
-      mapObstacles = (m.obstacles || []).map(function (o) {
+  /* ---------- 统一事件处理（房主=本地模拟事件，对手=DataChannel 消息） ---------- */
+  function handleEvent(type, d) {
+    if (type === 'roomCreated') {
+      mySlot = d.slot; roomId = d.roomId;
+      toastMsg('房间已创建：' + d.roomId + '（发给好友加入）');
+    }
+    else if (type === 'roomJoined') { mySlot = d.slot; roomId = d.roomId; toastMsg('已加入房间 ' + d.roomId); }
+    else if (type === 'queued') { toastMsg('匹配队列中，第 ' + d.position + ' 位…'); }
+    else if (type === 'peerJoined') { if (d.count >= 2) toastMsg('对手已加入，即将开始！'); }
+    else if (type === 'matchStart') { started = true; buildPuppets(); playSfx('ui'); }
+    else if (type === 'snapshot') { applySnapshot(d); }
+    else if (type === 'mapInit') {
+      // 本局地图：障碍全量同步（每局重置后房主会重发）
+      ARENA = { w: d.w, h: d.h };
+      mapMeta = { w: d.w, h: d.h, tile: d.tile };
+      mapObstacles = (d.obstacles || []).map(function (o) {
         return { type: o.type, x: o.x, y: o.y, w: o.w, h: o.h, hp: o.hp, maxHp: o.hp, alive: o.alive };
       });
+    }
+    else if (type === 'sfx') { playSfx(d && d.type); }
+    else if (type === 'powerupPickup') { playSfx('pickup'); }
+    else if (type === 'roundEnd') { playSfx('ui'); }
+    else if (type === 'countdown') { playSfx('ui'); }
+    else if (type === 'matchEnd') { onEnd(d.scores); }
+    else if (type === 'opponentLeft') { onEnd(null, '对手已离开'); }
+    else if (type === 'errorMsg') { toastMsg('⚠ ' + d.msg, 'warn'); }
+  }
+
+  function applySnapshot(s) {
+    if (!s) return;
+    // 砖墙增量更新（brk: 被打掉的砖墙 hp/alive 变化）
+    if (s.brk && s.brk.length) {
+      for (var k = 0; k < s.brk.length; k++) {
+        var u = s.brk[k], o = mapObstacles[u.i];
+        if (o) { o.hp = u.hp; o.alive = u.alive; }
+      }
+    }
+    latest = s;
+  }
+
+  /* ---------- DataChannel 收发 ---------- */
+  function sendTo(msg) {
+    if (conn && conn.open) { try { conn.send(msg); } catch (e) {} }
+  }
+  function onGuestData(m) {
+    if (!m || typeof m !== 'object') return;
+    if (m.t === 'snapshot') { applySnapshot(m.s); return; }
+    handleEvent(m.t, m.d || {});
+  }
+  function onPeerClosed() {
+    if (!active) return;
+    if (started) { handleEvent('opponentLeft', {}); }
+    else if (role === 'guest') { toastMsg('连接已断开', 'error'); NS.stop(); }
+  }
+
+  /* ---------- 房主：权威模拟 30Hz 循环 ---------- */
+  function hostTick() {
+    if (!sim || !active) return;
+    sim.tick();
+    var snap = sim.buildSnapshot();
+    applySnapshot(snap);                 // 房主本地渲染
+    sendTo({ t: 'snapshot', s: snap });  // 同步对手
+    flushHostEvents();
+    if (sim.phase === 'matchEnd') {      // 终局：停表（双方各自弹结算）
+      if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+    }
+  }
+  function flushHostEvents() {
+    var evs = sim.takeEvents();
+    for (var i = 0; i < evs.length; i++) {
+      handleEvent(evs[i].type, evs[i].data);       // 本地生效
+      sendTo({ t: evs[i].type, d: evs[i].data });  // 转发对手
+    }
+  }
+  function beginMatchAsHost(code) {
+    var HOST = global.CT_ONLINE_HOST;
+    if (!HOST || !HOST.Sim) { toastMsg('模拟模块缺失', 'error'); NS.stop(); return; }
+    sim = new HOST.Sim();
+    sim.start(); // 产生 matchStart/mapInit/countdown 事件 → 双方同步收到
+    flushHostEvents();
+    tickTimer = setInterval(hostTick, 1000 / HOST.TICK_HZ);
+  }
+
+  /* ---------- 角色启动 ---------- */
+  function startHost(matchMode) {
+    role = 'host';
+    var code = genCode();
+    var wantId = matchMode ? LOBBY_PEER_ID : peerIdFor(code);
+    peer = new global.Peer(wantId, { config: ICE_CONFIG });
+    peer.on('open', function () {
+      mySlot = 0;
+      roomId = matchMode ? '匹配中' : code;
+      handleEvent('roomCreated', { roomId: matchMode ? '匹配中' : code, slot: 0 });
+      if (matchMode) toastMsg('快速匹配：等待对手连接…');
     });
-    sock.on('sfx', function (d) { playSfx(d && d.type); });
-    sock.on('powerupPickup', function () { playSfx('pickup'); });
-    sock.on('roundEnd', function () { playSfx('ui'); });
-    sock.on('countdown', function () { playSfx('ui'); });
-    sock.on('matchEnd', function (d) { onEnd(d.scores); });
-    sock.on('opponentLeft', function () { onEnd(null, '对手已离开'); });
-    sock.on('errorMsg', function (d) { toastMsg('⚠ ' + d.msg, 'warn'); });
-    sock.on('disconnect', function () { if (active) toastMsg('与联机服务器断开', 'error'); });
+    peer.on('connection', function (c) {
+      if (conn) { try { c.close(); } catch (e) {} return; } // 只接一名对手
+      conn = c;
+      conn.on('open', function () {
+        handleEvent('peerJoined', { count: 2 });
+        sendTo({ t: 'roomJoined', d: { roomId: matchMode ? '匹配' : code, slot: 1 } });
+        beginMatchAsHost(code);
+      });
+      conn.on('data', function (m) {
+        if (m && m.t === 'input' && sim) sim.setInput(1, m.i);
+      });
+      conn.on('close', onPeerClosed);
+      conn.on('error', onPeerClosed);
+    });
+    peer.on('error', function (err) {
+      var type = err && err.type;
+      if (type === 'unavailable-id' && matchMode) {
+        // 大厅位已被占 → 有人正在等待，转为对手直连
+        try { peer.destroy(); } catch (e) {}
+        peer = null;
+        startGuest(null, true);
+        return;
+      }
+      if (type === 'unavailable-id') {
+        // 房间号极小概率撞车 → 换号重试
+        try { peer.destroy(); } catch (e) {}
+        peer = null;
+        startHost(false);
+        return;
+      }
+      if (type === 'peer-unavailable') { toastMsg('房间不存在，请确认房间号', 'error'); NS.stop(); return; }
+      toastMsg('联机错误：' + (type || 'unknown'), 'error');
+    });
+    peer.on('disconnected', function () { try { peer && peer.reconnect(); } catch (e) {} });
+  }
+
+  function startGuest(roomCode, isMatch) {
+    role = 'guest';
+    peer = new global.Peer(undefined, { config: ICE_CONFIG }); // 随机 PeerID
+    peer.on('open', function () {
+      var target = isMatch ? LOBBY_PEER_ID : peerIdFor(roomCode);
+      conn = peer.connect(target, { reliable: true });
+      conn.on('data', onGuestData);
+      conn.on('close', onPeerClosed);
+      conn.on('error', onPeerClosed);
+      // 连接看门狗：20s 内未开局视为失败
+      joinWatch = setTimeout(function () {
+        if (!started && active) {
+          toastMsg(isMatch ? '匹配超时：暂无等待中的对手，可稍后重试或改用房间号' : '连接超时：房间不存在或网络不通', 'error');
+          NS.stop();
+        }
+      }, 20000);
+    });
+    peer.on('error', function (err) {
+      var type = err && err.type;
+      if (type === 'peer-unavailable') { toastMsg('房间不存在，请确认房间号', 'error'); NS.stop(); return; }
+      toastMsg('联机错误：' + (type || 'unknown'), 'error');
+    });
+    peer.on('disconnected', function () { try { peer && peer.reconnect(); } catch (e) {} });
   }
 
   function onEnd(scores, reason) {
@@ -328,8 +471,7 @@
     var card = document.createElement('div');
     card.style.cssText = 'padding:32px 56px;border-radius:16px;background:rgba(10,16,36,.9);border:1px solid rgba(0,229,255,.45);text-align:center;font-family:system-ui;color:#e7ecf3';
     var txt = scores ? ('对战结束　' + scores[0] + ' : ' + scores[1]) : (reason || '对战结束');
-    card.innerHTML = '<div style="font-size:30px;letter-spacing:.1em;color:#ffd54a">' + txt + '</div>' +
-      '<div style="margin-top:18px;display:flex;gap:14px;justify-content:center">';
+    card.innerHTML = '<div style="font-size:30px;letter-spacing:.1em;color:#ffd54a">' + txt + '</div>';
     var btnRow = document.createElement('div');
     btnRow.style.cssText = 'margin-top:18px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap;max-width:520px';
     var back = document.createElement('button');
@@ -382,11 +524,13 @@
     };
     window.addEventListener('keydown', escHandler);
 
-    ensureSocketIo().then(function (io) {
-      socket = io(netUrl());
-      bindSocket(socket);
+    ensurePeerJs().then(function () {
+      if (!active) return; // 期间已被停止
+      if (opts.mode === 'join' && opts.roomId) startGuest(String(opts.roomId).toUpperCase(), false);
+      else if (opts.mode === 'match') startHost(true);
+      else startHost(false);
     }).catch(function (err) {
-      toastMsg('联机服务未启动：请先运行 online/server.js', 'error');
+      toastMsg('联机组件加载失败：' + (err && err.message || err), 'error');
       console.error('[online]', err);
       NS.stop();
     });
@@ -394,7 +538,11 @@
 
   NS.stop = function (silent) {
     active = false; started = false;
-    if (socket) { try { socket.disconnect(); } catch (e) {} socket = null; }
+    if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+    if (joinWatch) { clearTimeout(joinWatch); joinWatch = null; }
+    if (conn) { try { conn.close(); } catch (e) {} conn = null; }
+    if (peer) { try { peer.destroy(); } catch (e) {} peer = null; }
+    sim = null; role = null;
     if (escHandler) { window.removeEventListener('keydown', escHandler); escHandler = null; }
     puppets = [null, null]; latest = null;
     if (!silent) {
@@ -417,7 +565,8 @@
   try {
     global.__CT_ONLINE_DEBUG = function () {
       return {
-        active: active, started: started, mySlot: mySlot, roomId: roomId,
+        active: active, started: started, mySlot: mySlot, roomId: roomId, role: role,
+        phase: sim ? sim.phase : (latest ? latest.phase : null),
         latest: latest ? {
           tanks: latest.tanks.map(function (t) { return { x: t.x, y: t.y, hp: t.hp, alive: t.alive, angle: t.angle }; }),
           bullets: latest.bullets.length, phase: latest.phase, scores: latest.scores
