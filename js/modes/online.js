@@ -16,8 +16,8 @@
 (function (global) {
   'use strict';
 
-  // 必须与 server.js 的 ARENA 完全一致（坐标系对齐）
-  var ARENA = { w: 880, h: 600 };
+  // 必须与 server.js 的地图尺寸一致（坐标系对齐）；mapInit 到达后会被覆盖为真实尺寸
+  var ARENA = { w: 640, h: 640 };
 
   var NS = {};
   var active = false;       // 整个模式是否激活
@@ -32,9 +32,27 @@
   var opts = {};            // { mode, roomId, tank, skin }
   var escHandler = null;
   var _registered = false;
+  var mapObstacles = [];    // 本局地图障碍（来自 mapInit，brk 增量更新砖墙）
+  var mapMeta = { w: 640, h: 640, tile: 32 };
+  var prevBulletCount = 0;  // 用于开火音效节流
+  var lastSfxT = {};        // 各类音效节流时间戳
 
   function toastMsg(m, lv) { try { global.CT_TOAST && global.CT_TOAST(m, lv || 'info'); } catch (e) {} }
   function netUrl() { return global.CT_NET_URL || 'http://localhost:3000'; }
+
+  /* 音效：复用全局 CT_AUDIO（shoot/hit/kill/explode/pickup/ui…）
+   * 首屏交互已自动 resume，这里只管触发；对高频音做节流避免叠音爆音。 */
+  function playSfx(type) {
+    var A = global.CT_AUDIO;
+    if (!A || typeof A.play !== 'function') return;
+    var now = (global.performance ? performance.now() : Date.now());
+    var cd = { shoot: 90, hit: 70, kill: 0, explode: 0, pickup: 0, ui: 120 }[type] || 0;
+    if (cd) {
+      if ((lastSfxT[type] || 0) > now - cd) return;
+      lastSfxT[type] = now;
+    }
+    try { A.play(type); } catch (e) {}
+  }
 
   /* ---------- 动态加载 socket.io 客户端 ---------- */
   function ensureSocketIo() {
@@ -57,7 +75,7 @@
     // 我方 type='player'（原版渲染会给白色高亮环），对方 type='enemy'
     var p1 = new T({ x: 0, y: 0, type: 'player', tankClass: localClass, color: localColor });
     var p2 = new T({ x: 0, y: 0, type: 'enemy',  tankClass: localClass, color: '#ff2a6d' });
-    p1.maxHp = 100; p2.maxHp = 100;
+    p1.maxHp = 5; p2.maxHp = 5; // 与单人 1v1 一致：5 血
     // 顺序：puppets[0] 永远是服务端槽位0，puppets[1] 是槽位1；mySlot 决定哪个是“我”
     puppets = mySlot === 1 ? [p2, p1] : [p1, p2];
   }
@@ -140,6 +158,8 @@
       return;
     }
 
+    // 1v1 地图障碍（砖/钢/草/水/冰/泥/传送门）
+    renderObstacles(ctx, cam, scale);
     // 子弹（用同一相机换算）
     if (latest) {
       ctx.fillStyle = '#ffd54a';
@@ -149,6 +169,8 @@
         var sy = (b.y - cam.y) * scale + cam.h / 2;
         ctx.beginPath(); ctx.arc(sx, sy, 5 * scale, 0, Math.PI * 2); ctx.fill();
       }
+      // 道具（随机掉落，10s 未拾取消失）
+      renderPowerups(ctx, cam, scale);
     }
     // 坦克（原版 Tank 渲染，复用全部美术）
     if (puppets[0]) puppets[0].render(ctx, cam);
@@ -158,12 +180,77 @@
     drawHud(ctx, W, H);
   };
 
+  /* 1v1 地图障碍配色（与单人 1v1 一致） */
+  var OB_COLORS = {
+    brick: { fill: '#8a5a3c', edge: '#5e3c27' },
+    steel: { fill: '#9fb0c8', edge: '#6b7a93' },
+    bush:  { fill: 'rgba(46,139,87,0.5)' },
+    water: { fill: 'rgba(42,111,151,0.45)' },
+    ice:   { fill: 'rgba(191,233,255,0.55)' },
+    mud:   { fill: 'rgba(107,79,42,0.6)' },
+    portal:{ fill: '#c86cff' },
+  };
+  function renderObstacles(ctx, cam, scale) {
+    for (var i = 0; i < mapObstacles.length; i++) {
+      var o = mapObstacles[i];
+      if (!o || o.alive === false) continue;
+      var x = (o.x - cam.x) * scale + cam.w / 2;
+      var y = (o.y - cam.y) * scale + cam.h / 2;
+      var w = o.w * scale, h = o.h * scale;
+      if (o.type === 'portal') {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(200,108,255,0.9)'; ctx.lineWidth = 2 * scale;
+        ctx.shadowColor = '#c86cff'; ctx.shadowBlur = 10;
+        ctx.beginPath(); ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2); ctx.stroke();
+        ctx.restore();
+        continue;
+      }
+      var c = OB_COLORS[o.type] || { fill: '#888', edge: '#555' };
+      ctx.fillStyle = c.fill;
+      ctx.fillRect(x, y, w, h);
+      if (c.edge) {
+        ctx.strokeStyle = c.edge; ctx.lineWidth = 1;
+        ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+      }
+      // 砖墙受损变暗
+      if (o.type === 'brick' && o.maxHp && o.hp < o.maxHp) {
+        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+        ctx.fillRect(x, y, w, h);
+      }
+    }
+  }
+
+  /* 道具渲染：用 CT_POWERUP 定义表的配色 / emoji */
+  function renderPowerups(ctx, cam, scale) {
+    var DEF = (global.CT_POWERUP && global.CT_POWERUP.PowerupDefs) || {};
+    for (var i = 0; i < latest.powerups.length; i++) {
+      var p = latest.powerups[i];
+      var x = (p.x - cam.x) * scale + cam.w / 2;
+      var y = (p.y - cam.y) * scale + cam.h / 2;
+      var def = DEF[p.id] || { color: '#ffd700', emoji: '★' };
+      ctx.save();
+      ctx.shadowColor = def.color || '#fff'; ctx.shadowBlur = 12;
+      ctx.fillStyle = def.color || '#ffd700';
+      ctx.beginPath(); ctx.arc(x, y, 14 * scale, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#0b0f1a'; ctx.font = (16 * scale) + 'px system-ui';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(def.emoji || '★', x, y + 1);
+      ctx.restore();
+    }
+  }
+
   function drawHud(ctx, W, H) {
     if (!latest) return;
     ctx.save();
     ctx.textAlign = 'center';
     ctx.fillStyle = '#e7ecf3'; ctx.font = 'bold 22px system-ui';
     ctx.fillText('P1  ' + latest.scores[0] + '  :  ' + latest.scores[1] + '  P2', W / 2, 30);
+    ctx.font = 'bold 13px system-ui'; ctx.fillStyle = '#9fb0c8';
+    if (latest.round != null) ctx.fillText('第 ' + latest.round + ' 局 · BO5 先到 3 胜', W / 2, 50);
+    // 双方 5 格血条
+    drawHpBar(ctx, 16, H - 28, latest.tanks[0], '#00e5ff', 'P1');
+    drawHpBar(ctx, W - 16 - 180, H - 28, latest.tanks[1], '#ff2a6d', 'P2');
     ctx.textAlign = 'left';
     ctx.fillStyle = '#7c89a0'; ctx.font = '12px monospace';
     ctx.fillText('房间 ' + (roomId || '--') + (mySlot != null ? (' · 你: P' + (mySlot + 1)) : ''), 12, 22);
@@ -174,6 +261,21 @@
     } else if (latest.phase === 'roundEnd') {
       ctx.fillStyle = '#ffd54a'; ctx.font = 'bold 36px system-ui';
       ctx.fillText(latest.lastWinner === mySlot ? '本回合胜利！' : '本回合失利', W / 2, H / 2);
+    }
+    ctx.restore();
+  }
+  function drawHpBar(ctx, x, y, tank, color, label) {
+    if (!tank) return;
+    var seg = 36, gap = 3, h = 12;
+    ctx.save();
+    ctx.fillStyle = color; ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'left';
+    ctx.fillText(label, x, y - 4);
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fillRect(x, y, seg * 5 + gap * 4, h);
+    var hp = Math.max(0, Math.min(5, tank.hp | 0));
+    for (var i = 0; i < 5; i++) {
+      if (i < hp) { ctx.fillStyle = color; ctx.fillRect(x + i * (seg + gap), y, seg, h); }
+      else { ctx.fillStyle = 'rgba(255,255,255,0.06)'; ctx.fillRect(x + i * (seg + gap), y, seg, h); }
     }
     ctx.restore();
   }
@@ -189,8 +291,29 @@
     sock.on('roomJoined', function (d) { mySlot = d.slot; roomId = d.roomId; toastMsg('已加入房间 ' + d.roomId); });
     sock.on('queued', function (d) { toastMsg('匹配队列中，第 ' + d.position + ' 位…'); });
     sock.on('peerJoined', function (d) { if (d.count >= 2) toastMsg('对手已加入，即将开始！'); });
-    sock.on('matchStart', function () { started = true; buildPuppets(); });
-    sock.on('snapshot', function (s) { latest = s; });
+    sock.on('matchStart', function () { started = true; buildPuppets(); playSfx('ui'); });
+    sock.on('snapshot', function (s) {
+      // 砖墙增量更新（brk: 被打掉的砖墙 hp/alive 变化）
+      if (s.brk && s.brk.length) {
+        for (var k = 0; k < s.brk.length; k++) {
+          var u = s.brk[k], o = mapObstacles[u.i];
+          if (o) { o.hp = u.hp; o.alive = u.alive; }
+        }
+      }
+      latest = s;
+    });
+    sock.on('mapInit', function (m) {
+      // 本局地图：障碍全量同步（每局重置后服务端会重发）
+      ARENA = { w: m.w, h: m.h };
+      mapMeta = { w: m.w, h: m.h, tile: m.tile };
+      mapObstacles = (m.obstacles || []).map(function (o) {
+        return { type: o.type, x: o.x, y: o.y, w: o.w, h: o.h, hp: o.hp, maxHp: o.hp, alive: o.alive };
+      });
+    });
+    sock.on('sfx', function (d) { playSfx(d && d.type); });
+    sock.on('powerupPickup', function () { playSfx('pickup'); });
+    sock.on('roundEnd', function () { playSfx('ui'); });
+    sock.on('countdown', function () { playSfx('ui'); });
     sock.on('matchEnd', function (d) { onEnd(d.scores); });
     sock.on('opponentLeft', function () { onEnd(null, '对手已离开'); });
     sock.on('errorMsg', function (d) { toastMsg('⚠ ' + d.msg, 'warn'); });
@@ -248,6 +371,8 @@
     if (hud) hud.classList.add('hidden');
     var ENG = global.CT_ENGINE;
     if (ENG && ENG.gameState) ENG.gameState = null; // 清掉上一局残留，避免其它层误渲染
+    // 初始化音频（首次交互已自动 resume，这里确保节点图就绪）
+    try { if (global.CT_AUDIO && global.CT_AUDIO.init) global.CT_AUDIO.init(); } catch (e) {}
 
     // ESC 返回主菜单
     escHandler = function (e) {

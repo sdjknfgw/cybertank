@@ -295,6 +295,8 @@
     this._baseY = this.pos.y;
     /** 碰撞盒（考虑拾取半径扩大） */
     this.pickupRadius = opts.pickupRadius == null ? 32 : opts.pickupRadius;
+    /** 寿命：默认 10 秒未拾取即从场景消失（覆盖所有模式随机掉落道具） */
+    this.ttl = (opts.ttl != null) ? opts.ttl : 10;
   }
 
   /** AABB：按 w/h + 中心 */
@@ -322,6 +324,7 @@
     this._rot = 0;
     this.pickupRadius = opts.pickupRadius == null ? 32 : opts.pickupRadius;
     this.powerupId = opts.powerupId || null;
+    this.ttl = (opts.ttl != null) ? opts.ttl : 10;
     this.def = this.powerupId ? (PowerupDefs[this.powerupId] || null) : (opts.def || null);
     return this;
   };
@@ -335,6 +338,9 @@
   Powerup.prototype.update = function (dt, obstacles, tanks) {
     if (!this.alive) return false;
     dt = dt || 0;
+    /* 寿命倒计时：默认 10 秒未拾取即从场景中消失（所有模式通用） */
+    this.ttl -= dt;
+    if (this.ttl <= 0) { this.alive = false; return false; }
     this._t += dt * 3;
     this.pos.y = this._baseY + Math.sin(this._t) * 4;
     if (this.def && rarityRank(this.def.rarity) >= RARITY_ROTATE_MIN) {
