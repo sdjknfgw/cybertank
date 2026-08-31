@@ -108,6 +108,9 @@
         }
         // 2) 标记 html.touch，使 css/mobile-arcade.css 作用域生效（桌面无此 class）
         doc.documentElement.classList.add('touch');
+        // 3) 移动端坦克模型缩小到 0.7（仅视觉渲染缩放，不触碰碰撞框 _w/_h）：
+        //    相机始终居中玩家，缩小后中央坦克不再遮挡大片视野。桌面端不会走到这里。
+        global.CT_TANK_RENDER_SCALE = 0.7;
     }
 
     /* ---------- 状态 ---------- */

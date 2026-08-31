@@ -504,7 +504,11 @@
       sx = (sx - camera.x) * (camera.scale || 1) + camera.w / 2;
       sy = (sy - camera.y) * (camera.scale || 1) + camera.h / 2;
     }
-    var w = this._w, h = this._h;
+    /* 移动端模型缩放（仅视觉，不影响碰撞/命中框 _w/_h）：
+     * 由 mobile.js 在触屏设备置 global.CT_TANK_RENDER_SCALE（默认 undefined→1，桌面零影响）。
+     * 解决移动端坦克过大、居中后遮挡视野的问题。 */
+    var s = (global.CT_TANK_RENDER_SCALE && global.CT_TANK_RENDER_SCALE > 0) ? global.CT_TANK_RENDER_SCALE : 1;
+    var w = this._w * s, h = this._h * s;
     /* 草丛隐身：敌方坦克进入草丛近乎不可见；玩家保留淡淡轮廓 + 头顶光标便于定位 */
     var alpha = this.inBush ? (this.type === 'player' ? 0.22 : 0.08) : 1.0;
 
