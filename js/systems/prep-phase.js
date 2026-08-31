@@ -296,7 +296,9 @@
       /* 最后 3 秒：中央大字倒计时（下一波即将开始）
        * 注意：本 IIFE 无 global 参数（浏览器无全局 global 变量），
        * 此前写 global.CT_WAVE_BANNER 会抛 ReferenceError 被 catch 静默吞掉 → 必须用 window */
-      if (self.secondsRemaining > 0 && self.secondsRemaining <= 3) {
+      /* 「下一波即将开始」横幅只对波次模式有意义（horde/endless/king-hill）。
+       * 1v1（duel）没有波次概念，此前每局准备期最后 3 秒都会误弹 NEXT WAVE 提醒。 */
+      if (self.shopAllowed && self.secondsRemaining > 0 && self.secondsRemaining <= 3) {
         try {
           window.CT_WAVE_BANNER && window.CT_WAVE_BANNER.show(
             String(self.secondsRemaining),
@@ -306,9 +308,10 @@
         } catch (_) {}
       }
       if (self.secondsRemaining === 3) {
-        // 提前 3 秒锁定商店
+        // 提前 3 秒锁定商店（仅商店模式需要）
         try { if (SHOP && typeof SHOP.lock === 'function') SHOP.lock(); } catch (_) {}
-        BUS.emit('ui:shopLocked');
+        /* 非商店模式（如 1v1）不广播，否则 prep-ui 会弹出「🛑 SHOP LOCKED 商店已锁定」遮罩 */
+        if (self.shopAllowed) BUS.emit('ui:shopLocked');
       }
       if (self.secondsRemaining <= 0) {
         self._endAndStartCombat();

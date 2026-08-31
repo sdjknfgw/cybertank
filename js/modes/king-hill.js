@@ -378,9 +378,24 @@
           s.player.alive = true;
           s.player.hp = s.player.maxHp;
           s.player.pos.x = sp.x; s.player.pos.y = sp.y;
-          if (s.player.setInvincible) s.player.setInvincible(3);
+          // 复活保护增强（D-09）：延长无敌 + 短暂加速 + 预警横幅
+          s.player.respawnBoostT = 5;
+          try { if (s.player.setInvincible) s.player.setInvincible(5); } catch (_) {}
           global.CT_RESPAWN_T = 0;
           BUS.emit('player:revived', { target: s.player });
+          try { global.CT_WAVE_BANNER && global.CT_WAVE_BANNER.show('🛡 复活保护 5s', '无敌 + 加速', 1500); } catch (_) {}
+        }
+      }
+      // 复活保护期内给玩家加速（不依赖未知坦克方法，直接调节 muls.speed）
+      if (s.player && s.player.alive && (s.player.respawnBoostT || 0) > 0) {
+        s.player.respawnBoostT -= dt;
+        if (s.player.muls && typeof s.player.muls.speed === 'number') {
+          if (s.player._boostBaseSpeed == null) s.player._boostBaseSpeed = s.player.muls.speed;
+          s.player.muls.speed = s.player._boostBaseSpeed * 1.5;
+        }
+        if (s.player.respawnBoostT <= 0 && s.player.muls && typeof s.player.muls.speed === 'number') {
+          if (s.player._boostBaseSpeed != null) s.player.muls.speed = s.player._boostBaseSpeed;
+          s.player._boostBaseSpeed = null;
         }
       }
       for (let i = 0; i < s.bullets.length; i++) {
@@ -654,9 +669,9 @@
       const s = this.state; if (!s || !this.running) return;
       const dead = evt && evt.dead; if (!dead) return;
       if (dead.type === 'player') {
-        // 占点模式：玩家无限命 → 阵亡 3s 后重生（tick 驱动，便于显示复活倒计时）
-        s.playerRespawnT = 3;
-        global.CT_RESPAWN_T = 3;
+        // 占点模式：玩家无限命 → 阵亡 5s 后重生（tick 驱动，便于显示复活倒计时）
+        s.playerRespawnT = 5;
+        global.CT_RESPAWN_T = 5;
         return;
       }
       s.kills += 1;

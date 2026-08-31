@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CyberTank 联机 1v1</title>
+  <style>
+    /* —— 仅做基础排版，方便你替换成自己游戏的样式 —— */
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: #0c0f1a; color: #e7ecf3;
+      font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+      display: flex; flex-direction: column; align-items: center; min-height: 100vh;
+    }
+    h1 { margin: 18px 0 4px; font-size: 22px; letter-spacing: 2px; }
+    .sub { color: #8b95a7; font-size: 13px; margin-bottom: 14px; }
+    #wrap { position: relative; }
+    canvas { background: #11161f; border: 1px solid #283246; border-radius: 8px; display: block; }
+    /* 大厅覆盖层 */
+    #lobby {
+      position: absolute; inset: 0; background: rgba(8,11,18,.92);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+      border-radius: 8px; text-align: center;
+    }
+    #lobby.hidden { display: none; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; }
+    button {
+      background: #1b2233; color: #e7ecf3; border: 1px solid #34425f; border-radius: 6px;
+      padding: 10px 16px; font-size: 14px; cursor: pointer; transition: .15s;
+    }
+    button:hover { background: #243047; border-color: #4d6a9c; }
+    button.primary { background: #2b6cff; border-color: #2b6cff; }
+    button.primary:hover { background: #1f5af0; }
+    input {
+      background: #0e131e; color: #e7ecf3; border: 1px solid #34425f; border-radius: 6px;
+      padding: 10px 12px; font-size: 14px; width: 160px; text-transform: uppercase; letter-spacing: 3px;
+    }
+    .room-id { font-size: 30px; letter-spacing: 6px; color: #ffd54a; font-weight: 700; }
+    .tip { color: #8b95a7; font-size: 12px; max-width: 520px; line-height: 1.6; }
+    #status { color: #9fb0c8; font-size: 13px; min-height: 18px; }
+  </style>
+</head>
+<body>
+  <h1>CYBERTANK · 联机 1v1</h1>
+  <div class="sub">创建房间 · 输入房间号加入 · 或不填房间号直接快速匹配</div>
+
+  <div id="wrap">
+    <!-- 游戏画布：逻辑尺寸与服务端 ARENA 一致（880x600） -->
+    <canvas id="game" width="880" height="600"></canvas>
+
+    <!-- 大厅界面（对局开始后隐藏） -->
+    <div id="lobby">
+      <div id="status">请选择一种方式开始</div>
+
+      <!-- 方式一：创建房间 -->
+      <div class="row">
+        <button class="primary" id="btnCreate">创建房间</button>
+      </div>
+
+      <!-- 方式二：凭房间号加入 -->
+      <div class="row">
+        <input id="roomInput" maxlength="6" placeholder="房间号" />
+        <button id="btnJoin">加入房间</button>
+      </div>
+
+      <!-- 方式三：公开匹配（无房间号） -->
+      <div class="row">
+        <button id="btnMatch">快速匹配（自动排队）</button>
+      </div>
+
+      <!-- 建房后展示的房间号 -->
+      <div id="roomShow" style="display:none">
+        <div class="tip">把房间号发给好友：</div>
+        <div class="room-id" id="roomIdText">------</div>
+      </div>
+
+      <div class="tip">
+        操作：<b>W/A/S/D</b> 或方向键 移动转向 · <b>鼠标</b> 瞄准 · <b>左键/空格</b> 开火 · <b>右键/Shift</b> 技能(护盾)<br/>
+        本地测试：在浏览器开两个标签页，一个建房、一个用房间号加入即可。
+      </div>
+    </div>
+  </div>
+
+  <!-- Socket.IO 客户端由服务端自动提供，无需额外下载 -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+  (function () {
+    'use strict';
+
+    // ============================================================
+    // 1. 连接与服务端状态
+    // ============================================================
+    const socket = io();           // 默认连接同源（即本服务器）
+    let mySlot = null;             // 我在房间里的槽位：0 或 1
+    let lastSnap = null;           // 最近一次服务端快照
+    let matchStarted = false;
+
+    const lobby = document.getElementById('lobby');
+    const statusEl = document.getElementById('status');
+    const roomShow = document.getElementById('roomShow');
+    const roomIdText = document.getElementById('roomIdText');
+
+    function setStatus(t) { statusEl.textContent = t; }
+
+    // ============================================================
+    // 2. 大厅按钮事件
+    // ============================================================
+    document.getElementById('btnCreate').onclick = () => {
+      setStatus('正在创建房间…'); socket.emit('createRoom');
+    };
+    document.getElementById('btnJoin').onclick = () => {
+      const id = document.getElementById('roomInput').value.trim();
+      if (!id) { setStatus('请先输入房间号'); return; }
+      setStatus('正在加入…'); socket.emit('joinRoom', { roomId: id });
+    };
+    document.getElementById('btnMatch').onclick = () => {
+      setStatus('已进入匹配队列，等待对手…'); socket.emit('quickMatch');
+    };
+
+    // ============================================================
+    // 3. 服务端事件回调
+    // ============================================================
+    socket.on('roomCreated', ({ roomId, slot }) => {
+      mySlot = slot;
+      roomShow.style.display = 'block';
+      roomIdText.textContent = roomId;
+      setStatus('房间已创建，等待对手加入…');
+    });
+
+    socket.on('roomJoined', ({ roomId, slot }) => {
+      mySlot = slot;
+      setStatus('已加入房间 ' + roomId + '，等待开局…');
+    });
+
+    socket.on('queued', ({ position }) => {
+      setStatus('匹配队列中，当前第 ' + position + ' 位，等待对手…');
+    });
+
+    socket.on('peerJoined', ({ count }) => {
+      if (count >= 2) setStatus('对手已加入，即将开始！');
+    });
+
+    socket.on('matchStart', () => {
+      matchStarted = true;
+      lobby.classList.add('hidden'); // 隐藏大厅，进入对战画面
+    });
+
+    // 核心：每收到快照就刷新本地画面数据（渲染在动画循环里完成）
+    socket.on('snapshot', (snap) => { lastSnap = snap; });
+
+    socket.on('roundEnd', () => {}); // 快照里已含 phase，无需特殊处理
+    socket.on('matchEnd', ({ scores }) => {
+      setStatus('对战结束  比分 ' + scores[0] + ' : ' + scores[1] + '（点击「快速匹配」再来一局）');
+      lobby.classList.remove('hidden');
+      matchStarted = false; mySlot = null;
+      roomShow.style.display = 'none';
+    });
+
+    socket.on('opponentLeft', () => {
+      setStatus('对手已离开，对局结束。'); lobby.classList.remove('hidden');
+      matchStarted = false; mySlot = null; roomShow.style.display = 'none';
+    });
+
+    socket.on('errorMsg', ({ msg }) => setStatus('⚠ ' + msg));
+
+    // ============================================================
+    // 4. 输入采集（只读取，不发往服务端前不做任何物理运算）
+    // ============================================================
+    const keys = {};
+    window.addEventListener('keydown', e => { keys[e.code] = true; });
+    window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+    const canvas = document.getElementById('game');
+    const mouse = { x: 0, y: 0, down: false, skill: false };
+    canvas.addEventListener('mousemove', e => {
+      const r = canvas.getBoundingClientRect();
+      mouse.x = (e.clientX - r.left) * (canvas.width / r.width);
+      mouse.y = (e.clientY - r.top) * (canvas.height / r.height);
+    });
+    canvas.addEventListener('mousedown', e => {
+      if (e.button === 0) mouse.down = true;
+      if (e.button === 2) mouse.skill = true;
+    });
+    canvas.addEventListener('mouseup', e => {
+      if (e.button === 0) mouse.down = false;
+      if (e.button === 2) mouse.skill = false;
+    });
+    canvas.addEventListener('contextmenu', e => e.preventDefault()); // 屏蔽右键菜单，用于技能
+
+    // 把当前按键/鼠标状态整理成与服务端约定一致的结构
+    function gatherInput() {
+      const up = !!(keys['KeyW'] || keys['ArrowUp']);
+      const down = !!(keys['KeyS'] || keys['ArrowDown']);
+      const left = !!(keys['KeyA'] || keys['ArrowLeft']);
+      const right = !!(keys['KeyD'] || keys['ArrowRight']);
+      const fire = mouse.down || !!keys['Space'];
+      const skill = mouse.skill || !!keys['ShiftLeft'] || !!keys['ShiftRight'];
+      // 瞄准角：用「自己坦克」当前坐标指向鼠标（快照里拿自己坐标）
+      let aim = mySlot === 0 ? 0 : Math.PI;
+      if (lastSnap && lastSnap.tanks[mySlot]) {
+        const me = lastSnap.tanks[mySlot];
+        aim = Math.atan2(mouse.y - me.y, mouse.x - me.x);
+      }
+      return { up, down, left, right, fire, skill, aim };
+    }
+
+    // 按 30Hz 上报输入（与服务端模拟频率一致即可，过高只是浪费带宽）
+    setInterval(() => {
+      if (mySlot !== null && socket.connected) socket.emit('input', gatherInput());
+    }, 1000 / 30);
+
+    // ============================================================
+    // 5. 渲染循环（只画服务端快照，保证两端一致、无作弊空间）
+    // ============================================================
+    const ctx = canvas.getContext('2d');
+
+    function drawTank(t, isMe) {
+      if (!t.alive) return;
+      ctx.save();
+      ctx.translate(t.x, t.y);
+
+      // 车体
+      ctx.save();
+      ctx.rotate(t.angle);
+      ctx.fillStyle = isMe ? '#2b6cff' : '#ff3b6b';
+      ctx.strokeStyle = '#0c0f1a';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(-TANK_R, -TANK_R * 0.75, TANK_R * 2, TANK_R * 1.5, 5);
+      ctx.fill(); ctx.stroke();
+      ctx.restore();
+
+      // 炮塔（跟随瞄准方向）
+      ctx.save();
+      ctx.rotate(t.turretAngle);
+      ctx.fillStyle = '#cfe0ff';
+      ctx.fillRect(0, -3, TANK_R + 10, 6);
+      ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+
+      // 护盾光圈
+      if (t.shield > 0) {
+        ctx.strokeStyle = 'rgba(90,200,255,.8)';
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(0, 0, TANK_R + 6, 0, Math.PI * 2); ctx.stroke();
+      }
+
+      // 受击闪白
+      if (t.hitFlash > 0) {
+        ctx.fillStyle = 'rgba(255,255,255,.5)';
+        ctx.beginPath(); ctx.arc(0, 0, TANK_R, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.restore();
+
+      // 头顶血条
+      const bw = 44, bh = 5;
+      ctx.fillStyle = '#000'; ctx.fillRect(t.x - bw / 2, t.y - TANK_R - 14, bw, bh);
+      ctx.fillStyle = isMe ? '#2b6cff' : '#ff3b6b';
+      ctx.fillRect(t.x - bw / 2, t.y - TANK_R - 14, bw * Math.max(0, t.hp) / 100, bh);
+    }
+
+    function render() {
+      requestAnimationFrame(render);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (!lastSnap) return;
+
+      const A = lastSnap.arena;
+
+      // 背景网格
+      ctx.strokeStyle = '#1b2233'; ctx.lineWidth = 1;
+      for (let x = 0; x <= A.w; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, A.h); ctx.stroke(); }
+      for (let y = 0; y <= A.h; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(A.w, y); ctx.stroke(); }
+
+      // 子弹
+      ctx.fillStyle = '#ffd54a';
+      for (const b of lastSnap.bullets) {
+        ctx.beginPath(); ctx.arc(b.x, b.y, 5, 0, Math.PI * 2); ctx.fill();
+      }
+
+      // 两辆坦克（mySlot 决定哪辆高亮为“我”）
+      drawTank(lastSnap.tanks[0], mySlot === 0);
+      drawTank(lastSnap.tanks[1], mySlot === 1);
+
+      // 顶部比分
+      ctx.fillStyle = '#e7ecf3'; ctx.font = 'bold 20px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText('P1  ' + lastSnap.scores[0] + '  :  ' + lastSnap.scores[1] + '  P2', A.w / 2, 28);
+
+      // 倒计时 / 回合结算覆盖文字
+      ctx.fillStyle = '#ffd54a';
+      if (lastSnap.phase === 'countdown') {
+        ctx.font = 'bold 64px system-ui';
+        ctx.fillText(lastSnap.countdown, A.w / 2, A.h / 2);
+      } else if (lastSnap.phase === 'roundEnd') {
+        ctx.font = 'bold 36px system-ui';
+        const who = lastSnap.lastWinner === mySlot ? '你赢下本回合！' : '对手赢下本回合';
+        ctx.fillText(who, A.w / 2, A.h / 2);
+      }
+      ctx.textAlign = 'left';
+    }
+    render();
+  })();
+  </script>
+</body>
+</html>

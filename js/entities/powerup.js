@@ -397,6 +397,11 @@
     var r = RARITY_COLOR[def.rarity] || '#fff';
     ctx.save();
     ctx.translate(sx, sy);
+    /* 移动端道具缩放（仅视觉，不改变碰撞/拾取盒 this.w/this.aabb）：
+     * 由 mobile.js 在触屏设备置 global.CT_POWERUP_RENDER_SCALE（默认 undefined→1，桌面零影响）。
+     * 与坦克统一为 0.4 倍，避免道具图标过大遮挡地图视野。 */
+    var ps = (global.CT_POWERUP_RENDER_SCALE && global.CT_POWERUP_RENDER_SCALE > 0) ? global.CT_POWERUP_RENDER_SCALE : 1;
+    if (ps !== 1) ctx.scale(ps, ps);
     /* 光环（legendary 双环） */
     var ringR = this.w * 0.9;
     if (def.rarity === RARITY.LEGENDARY) {

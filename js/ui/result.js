@@ -193,7 +193,7 @@
             const last = global.CT_LAST_MODE_OPTS || { mode: mode, tank: undefined, skin: undefined, difficulty: undefined };
             const H = global.CT_UI_HUD;
             if (H && typeof H.startGame === 'function') {
-                H.startGame(last.mode, last.tank, last.skin, last.difficulty);
+                H.startGame(last.mode, last.tank, last.skin, last.difficulty, last.opponent, last.p2Tank);
             } else if (global.CT_UI_MENU && typeof global.CT_UI_MENU.renderTankWorkshop === 'function') {
                 const hud = document.getElementById('game-hud-wrap');
                 if (hud) hud.classList.add('hidden');

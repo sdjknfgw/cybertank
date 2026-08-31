@@ -613,9 +613,74 @@
                     unlocked: !!a.unlocked
                 });
             }
-            return arr;
-        }
-    };
+      return arr;
+    },
+
+    /* ==================== 存档导出 / 导入（D-05） ====================
+     * 纯前端无账号体系，云端存档用「本地导出/导入 + 可插拔 SyncAdapter」替代：
+     *  - exportSave() / importSave()：生成/解析便携 JSON 文本，便于玩家备份与迁移。
+     *  - setSyncAdapter()：预留云端接入点（upload/download 两个 Promise 方法）。
+     *    未接入时 syncToCloud/syncFromCloud 仅给出「需登录账号」提示，不报错。 */
+    exportSave: function () {
+      try {
+        var data = this.get();
+        return JSON.stringify({ __ct_save__: true, v: SCHEMA_VERSION, data: data });
+      } catch (e) {
+        _toast('导出存档失败：' + (e && e.message ? e.message : e), 'error');
+        return '';
+      }
+    },
+
+    importSave: function (jsonText) {
+      if (!jsonText) return false;
+      var parsed;
+      try { parsed = JSON.parse(jsonText); } catch (e) { return false; }
+      if (!parsed || !parsed.__ct_save__) return false;
+      var incoming = parsed.data || parsed;
+      if (!incoming || typeof incoming !== 'object') return false;
+      // 2 层 merge：以现有存档为基底叠加导入字段，不会清空未提供的字段
+      var merged = _merge2(this.get(), incoming);
+      merged.achievements = _merge2(_makeAchievements(), incoming.achievements || {});
+      merged.schemaVersion = SCHEMA_VERSION;
+      try { this._writeRaw(JSON.stringify(merged)); } catch (e) { this._onQuotaExceed(e); return false; }
+      // 同步设置（音量 / 画质）到运行中的引擎
+      try { this.saveSettings({}); } catch (_) {}
+      _toast('存档导入成功。', 'info');
+      return true;
+    },
+
+    /* 云端同步适配器（可插拔）：当前纯前端无账号，预留接口。
+     * 接入方实现：{ upload(data) -> Promise, download() -> Promise<data> } */
+    _syncAdapter: null,
+    setSyncAdapter: function (adapter) {
+      if (adapter && (typeof adapter.upload === 'function' || typeof adapter.download === 'function')) {
+        this._syncAdapter = adapter;
+        _toast('已接入云端存档适配器（实验性）。', 'info');
+        return true;
+      }
+      return false;
+    },
+    syncToCloud: function () {
+      if (!this._syncAdapter || typeof this._syncAdapter.upload !== 'function') {
+        _toast('☁ 云端存档需要登录账号（功能预留，当前使用本地存档）。', 'info');
+        return (typeof Promise !== 'undefined') ? Promise.resolve(false) : false;
+      }
+      try { return this._syncAdapter.upload(this.get()); } catch (e) { _toast('云端上传失败：' + e.message, 'error'); return false; }
+    },
+    syncFromCloud: function () {
+      var self = this;
+      if (!this._syncAdapter || typeof this._syncAdapter.download !== 'function') {
+        _toast('☁ 云端存档需要登录账号（功能预留，当前使用本地存档）。', 'info');
+        return (typeof Promise !== 'undefined') ? Promise.resolve(false) : false;
+      }
+      try {
+        return this._syncAdapter.download().then(function (data) {
+          if (data) { self._writeRaw(JSON.stringify(data)); self.saveSettings({}); return true; }
+          return false;
+        });
+      } catch (e) { _toast('云端下载失败：' + e.message, 'error'); return false; }
+    }
+  };
 
     /* ==========================================================
      * 挂到全局

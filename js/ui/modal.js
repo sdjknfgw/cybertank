@@ -312,12 +312,14 @@
         appendCorners(kb, 'cyan');
         kb.appendChild(mk('h4', 'font-tech text-glow-cyan mb-4 text-lg flex items-center gap-2', '⌨ 键盘操作'));
         const kbRows = [
-            ['W / A / S / D', '四向移动坦克，或方向键 ↑←↓→'],
-            ['空格 Space',    '发射主武器（主炮）'],
-            ['E 键',          '释放坦克专属技能（有冷却）'],
-            ['1 ~ 5',         '使用对应格道具（徽章/回血/护盾）'],
-            ['ESC / P',       '暂停游戏，呼出菜单'],
-            ['Tab',           '快速查看记分板'],
+            ['W A S D',     'P1 四向移动坦克（方向键 ↑←↓→ 归本地双人 P2 使用）'],
+            ['空格 / J',     'P1 发射主炮（鼠标左键同效）'],
+            ['E / K',        'P1 释放坦克专属技能（有冷却）'],
+            ['1 ~ 5',        '使用对应格道具（徽章/回血/护盾）'],
+            ['F',            '交互 / 进入商店'],
+            ['M',            '切换大地图'],
+            ['ESC / P',      '暂停游戏，呼出菜单'],
+            ['Tab',          '快速查看记分板'],
         ];
         const kbTbl = mk('div', 'border border-neon-cyan/25 rounded-lg overflow-hidden text-sm');
         kbRows.forEach((r, i) => {
@@ -359,6 +361,26 @@
             '拖动屏幕可瞄准炮塔方向；道具栏点击即可使用。<br>' +
             '<span style="color:var(--text-lo)">（宽屏 ≥768px 默认隐藏虚拟摇杆，窄屏自动显示）</span>'));
         grid.appendChild(mb);
+
+        // 本地双人（1v1）P2 操作（独立整行，避免与 P1 键位混淆）
+        const p2 = mk('div', 'neon-panel p-5 relative md:col-span-2');
+        appendCorners(p2, 'gold');
+        p2.appendChild(mk('h4', 'font-tech text-glow-gold mb-3 text-lg flex items-center gap-2', '👥 本地双人（仅 1v1 模式）'));
+        p2.appendChild(mk('div', 'text-text-lo text-xs mb-3', '开启「本地双人」后，P2 用右侧键盘独立操控，与 P1 同步对战。'));
+        const p2Rows = [
+            ['↑ ↓ ← →', 'P2 四向移动'],
+            ['Enter',   'P2 发射主炮'],
+            ['右 Shift', 'P2 释放技能'],
+        ];
+        const p2Tbl = mk('div', 'border border-neon-gold/25 rounded-lg overflow-hidden text-sm grid grid-cols-1 sm:grid-cols-3');
+        p2Rows.forEach((r, i) => {
+            const tr = mk('div', 'flex px-3 py-2.5 gap-3 ' + (i % 2 ? 'bg-neon-gold/5' : ''));
+            tr.appendChild(mk('span', 'w-28 font-mono text-neon-gold', r[0]));
+            tr.appendChild(mk('span', 'flex-1 text-text-mid', r[1]));
+            p2Tbl.appendChild(tr);
+        });
+        p2.appendChild(p2Tbl);
+        grid.appendChild(p2);
 
         body.appendChild(grid);
         return MODAL.show({

@@ -172,6 +172,14 @@
             if (k === 'arrowright')k = 'arrowright';
             if (down) INPUT.keys.add(k);
             else INPUT.keys.delete(k);
+            /* 同时记录物理键位 ev.code（小写）：左右 Shift / Ctrl 等修饰键的 ev.key 完全相同
+             * （都是 'Shift'），无法区分左右，本地双人 P2 的「右Shift」必须靠 code 才能识别。
+             * 普通键（ArrowUp/KeyW/Digit1…）与 ev.key 互不冲突，只是多存一份别名。 */
+            if (ev.code) {
+              const code = String(ev.code).toLowerCase();
+              if (down) INPUT.keys.add(code);
+              else INPUT.keys.delete(code);
+            }
             global.CT_BUS && global.CT_BUS.emit(down ? 'input:keydown' : 'input:keyup', { key: k, raw: ev });
         };
         window.addEventListener('keydown', keyHandler(true), false);
@@ -240,7 +248,7 @@
             if (_pauseOverlay) _pauseOverlay.style.display = 'none';
             // 2. 停止所有模式（无条件调用：_gameOver 后 running=false 但 tick/绑定仍残留，
             //    各模式 stop() 幂等，重复调用安全）
-            ['CT_MODE_BR', 'CT_MODE_KH', 'CT_MODE_HORDE', 'CT_MODE_DUEL', 'CT_MODE_KINGDEFEND'].forEach((k) => {
+            ['CT_MODE_BR', 'CT_MODE_KH', 'CT_MODE_HORDE', 'CT_MODE_DUEL', 'CT_MODE_KINGDEFEND', 'CT_MODE_ONLINE'].forEach((k) => {
                 const m = global[k];
                 if (m && typeof m.stop === 'function') {
                     try { m.stop(); } catch (e) { console.warn('[exitToMenu] stop ' + k, e); }
@@ -629,6 +637,7 @@
             ['CT_MODE_KH',     '模式-占山为王'],
             ['CT_MODE_DUEL',   '模式-1v1'],
             ['CT_MODE_KINGDEFEND', '模式-据点守护'],
+            ['CT_MODE_ONLINE', '模式-联机1v1'],
         ];
         for (let i = 0; i < modules.length; i++) {
             const [name] = modules[i];

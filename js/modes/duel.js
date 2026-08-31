@@ -45,6 +45,13 @@
   const BOUNCE_TIMES = 2;        // 子弹反弹 2 次
   const PUP_FIRST = 6;           // 首颗增益道具掉落延迟
   const PUP_INTERVAL = 14;       // 之后每 14s 一颗（技能随机掉落）
+  const PORTAL_PAIRS = 3;        // 传送门对数（随机散布，不再按模板规则成片摆放）
+  const PORTAL_MIN_GAP = 6;      // 同一对传送门两端的最小间隔（格）
+  const PORTAL_MIN_SPREAD = 3;   // 不同传送门之间的最小间隔（格），避免扎堆成片
+
+  /* 车型 → 专属配色（与菜单 TANKS 定义一致）
+   * P2 换车型时颜色随之变化，取色规则与 P1 完全相同 */
+  const TANK_COLORS = { assault: '#00e5ff', heavy: '#ffb020', sniper: '#a855f7', engineer: '#7cf76b' };
 
   /* 对称竞技场模板（基础 20×20，加载期统一放大 2 倍 → 40×40，tile=64 → 2560×2560，从原点铺满世界）
    * 点对称（180° 旋转对称）保证 P1/P2 公平；网格化均匀布局：5 段 × 4 列
@@ -58,10 +65,12 @@
     'WW................WW',
     '....II..MM...II.....',
     'GG..II..M.M..II...GG',
-    '..P...............Q.',
+    /* 传送门不再写死在模板里（原 P/Q 固定在第 8/11 行，成行成片、位置可预测）。
+     * 改为地图生成后从空地中随机取点成对散布，见 createMapFromTemplate 的 _scatterPortals。 */
+    '....................',
     '....SS........SS....',
     '....SS........SS....',
-    '..Q...............P.',
+    '....................',
     'GG..II..M.M..II...GG',
     '....II..MM...II.....',
     'WW................WW',
@@ -95,8 +104,7 @@
     const offX = (MAP_W - totalW) / 2;
     const offY = (MAP_H - totalH) / 2;
     const obstacles = [];
-    let portalSeq = 0;
-    let lastPortal = null;
+    const emptyCells = [];   // 空地格：供传送门随机落点
     for (let r = 0; r < rows; r++) {
       const row = template[r] || '';
       for (let c = 0; c < cols; c++) {
@@ -109,22 +117,56 @@
         else if (ch === 'W' && Water) obstacles.push(new Water({ x, y, w: tileSize, h: tileSize }));
         else if (ch === 'I' && Ice) obstacles.push(new Ice({ x, y, w: tileSize, h: tileSize }));
         else if (ch === 'M' && Mud) obstacles.push(new Mud({ x, y, w: tileSize, h: tileSize }));
-        else if ((ch === 'P' || ch === 'Q') && Portal) {
-          portalSeq++;
-          const p = new Portal({ id: 'duel_portal_' + portalSeq, pairId: null, x, y, w: tileSize, h: tileSize });
-          if (lastPortal && !lastPortal.portalPairId) {
-            /* 与上一个未配对的门双向配对 */
-            lastPortal.portalPairId = p.portalId;
-            p.portalPairId = lastPortal.portalId;
-            lastPortal = null;
-          } else {
-            lastPortal = p;
-          }
-          obstacles.push(p);
-        }
+        else emptyCells.push({ c: c, r: r, x: x, y: y });
       }
     }
+    /* 传送门改为随机散布（不再按模板固定成行成片） */
+    if (Portal) _scatterPortals(obstacles, emptyCells, tileSize);
     return { obstacles, w: totalW, h: totalH, tile: tileSize, offX, offY };
+  }
+
+  /* 传送门随机散布：从空地中随机取点、成对放置并双向互联。
+   * 约束：
+   *  - 同一对两端间隔 >= PORTAL_MIN_GAP 格 → 传送才有位移意义；
+   *  - 任意两个传送门间隔 >= PORTAL_MIN_SPREAD 格 → 避免扎堆成片。 */
+  function _scatterPortals(obstacles, emptyCells, tileSize) {
+    if (!emptyCells || emptyCells.length < 2) return;
+    const pool = emptyCells.slice();
+    /* Fisher–Yates 洗牌 */
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = (Math.random() * (i + 1)) | 0;
+      const tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
+    }
+    const placed = [];
+    let seq = 0;
+    function notClustered(cell) {
+      for (let i = 0; i < placed.length; i++) {
+        const p = placed[i];
+        if (Math.abs(p.c - cell.c) < PORTAL_MIN_SPREAD && Math.abs(p.r - cell.r) < PORTAL_MIN_SPREAD) return false;
+      }
+      return true;
+    }
+    for (let i = 0; i < pool.length && placed.length < PORTAL_PAIRS * 2; i++) {
+      const a = pool[i];
+      if (!a || !notClustered(a)) continue;
+      let partner = null;
+      for (let j = pool.length - 1; j > i; j--) {
+        const b = pool[j];
+        if (!b) continue;
+        if (Math.abs(b.c - a.c) < PORTAL_MIN_GAP && Math.abs(b.r - a.r) < PORTAL_MIN_GAP) continue;
+        if (!notClustered(b)) continue;
+        partner = b;
+        pool.splice(j, 1);
+        break;
+      }
+      if (!partner) continue;
+      seq++;
+      const idA = 'duel_portal_' + seq + 'a';
+      const idB = 'duel_portal_' + seq + 'b';
+      obstacles.push(new Portal({ id: idA, pairId: idB, x: a.x, y: a.y, w: tileSize, h: tileSize }));
+      obstacles.push(new Portal({ id: idB, pairId: idA, x: partner.x, y: partner.y, w: tileSize, h: tileSize }));
+      placed.push(a, partner);
+    }
   }
 
   /* ==========================================================
@@ -152,6 +194,10 @@
         this._gcTimer = 0;
 
         const tankClass  = options.tankClass || options.tank || 'assault';
+        /* 本地双人 P2 车型：由菜单「玩家2 选择界面」独立挑选（不再镜像 P1）；
+         * 缺省回退 'assault'。'same' 仅作历史兼容保留。 */
+        const _p2Raw = options.p2Tank || options.p2TankClass || 'assault';
+        const p2TankClass = (_p2Raw && _p2Raw !== 'same') ? _p2Raw : 'assault';
         const skin       = options.skin       || '#00f0ff';
         const difficulty = options.difficulty || 'normal';
 
@@ -180,20 +226,29 @@
         p1.playerSlot = 1;
         p1.score = 0; // 局数胜场
 
-        // --- 对手 P2（右上，默认 AI）---
+        // --- 对手 P2（右上）---
+        // 本地双人：P2 建成真正的玩家坦克（与 P1 同车型，点对称竞技场保证公平），
+        // 一开局即启用本地双人，不再依赖"游戏中按方向键才偷偷切换"；AI 模式保持原 EnemyAI。
         const p2Sp = safePt(MAP_W * 0.75, MAP_H * 0.25);
+        const local2P = (options.opponent === 'local');
         let p2;
-        try {
-          p2 = new EnemyCtor({ x: p2Sp.x, y: p2Sp.y, rank: 'elite', wave: 5, type: 'enemy' });
-        } catch (_) {
-          p2 = new TankCtor({ x: p2Sp.x, y: p2Sp.y, type: 'enemy' });
+        if (local2P) {
+          p2 = new TankCtor({ x: p2Sp.x, y: p2Sp.y, type: 'player', tankClass: p2TankClass, color: '#ff2a6d', name: 'P2' });
+          p2.isAI = false;
+        } else {
+          try {
+            p2 = new EnemyCtor({ x: p2Sp.x, y: p2Sp.y, rank: 'elite', wave: 5, type: 'enemy' });
+          } catch (_) {
+            p2 = new TankCtor({ x: p2Sp.x, y: p2Sp.y, type: 'enemy' });
+          }
+          p2.isAI = true;
         }
         p2.maxHp = 5; p2.hp = 5;
-        p2.color = '#ff2a6d';
+        /* 颜色随车型变化（与 P1 同一套车型→配色规则），不再固定 #ff2a6d */
+        p2.color = TANK_COLORS[p2TankClass] || '#ff2a6d';
         p2.name = 'P2';
         p2.playerSlot = 2;
         p2.score = 0;
-        p2.isAI = true;
 
         this.state = {
           mode: 'duel',
@@ -216,7 +271,9 @@
           kills: 0,
           coins: 0,
           wins: stored.wins || 0,
-          p2Local: false   // 是否检测到本地 P2 按键
+          p2Local: local2P,   // 本地双人：开局即启用，而非靠中途按键检测
+          opponent: options.opponent || 'ai',
+          roundResolved: false // 每局仅结算一次，避免同帧双亡导致重复结算/复活错乱（本地双人两辆皆 player 时易触发）
         };
         ENG.gameState = this.state;
         try { if (RENDER.world) { RENDER.world.w = MAP_W; RENDER.world.h = MAP_H; RENDER.world.tile = 64; } } catch (_) {}
@@ -242,6 +299,15 @@
         }
         BUS.emit('mode:started', { mode: 'duel', state: this.state });
         console.log('[MODE DUEL] started, round=1');
+        // D-04：联机 / 赛季为纯前端不可实现项（需服务端账号与匹配），此处以「本地双人」作为替代方案。
+        // 预留 CT_SEASON 适配器接口：若未来接入云端赛季/排行榜，注入 global.CT_SEASON 即可上报，否则静默跳过。
+        if (global.CT_SEASON && typeof global.CT_SEASON.reportDuel === 'function') {
+          try { global.CT_SEASON.reportDuel({ mode: 'duel', opponent: options.opponent || 'ai' }); } catch (_) {}
+        }
+        // 本地双人：开局即弹提示横幅（不再依赖中途按键检测）
+        if (local2P) {
+          try { global.CT_WAVE_BANNER && global.CT_WAVE_BANNER.show('👥 本地双人已启用', 'P2：方向键 + Enter / 右Shift', 2000); } catch (_) {}
+        }
       } catch (e) { console.error('[MODE DUEL] start:', e); }
     },
 
@@ -273,19 +339,23 @@
       const s = this.state;
 
       // 检测 P2 本地输入（↑↓←→ Enter RShift）
-      if (!s.p2Local && INPUT && INPUT.keys) {
-        const k = INPUT.keys;
-        if (k.has('arrowup') || k.has('arrowdown') || k.has('arrowleft') || k.has('arrowright') || k.has('enter') || k.has('shiftright')) {
+      // 必须用运行时 global.CT_INPUT：duel.js 在 main.js 之前加载，顶部
+      // const INPUT = global.CT_INPUT || {} 捕获的是空 stub（main.js 当时还没定义 CT_INPUT），
+      // 箭头键永远不会进入那个 stub 的 keys 集合，导致 P2 方向键"无反应"。
+      const _liveIn = (global.CT_INPUT) || INPUT;
+      if (!s.p2Local && _liveIn && _liveIn.keys) {
+        const k = _liveIn.keys;
+        if (k.has('arrowup') || k.has('arrowdown') || k.has('arrowleft') || k.has('arrowright') || k.has('enter') || k.has('shiftright') || k.has('rshift')) {
           s.p2Local = true;
           s.p2.isAI = false;
           console.log('[MODE DUEL] P2 local input detected → 本地双人模式');
+          // D-12：检测到本地双人时弹出提示横幅
+          try { global.CT_WAVE_BANNER && global.CT_WAVE_BANNER.show('👥 本地双人已启用', 'P2：方向键 + Enter / 右Shift', 1800); } catch (_) {}
         }
       }
 
-      // 本地双人：手动驱动 P2
-      if (s.p2Local && s.p2 && s.p2.alive) {
-        this._driveP2Local(s.p2, dt);
-      }
+      /* P2 不再单独手动驱动：改走与 P1 相同的 Tank.update（见下方坦克更新循环），
+       * 这样移动手感/碰撞解析/开火/技能/传送门/增益衰减与 P1 完全一致。 */
 
       // 局内计时
       if (s.phase === 'COMBAT') {
@@ -295,7 +365,7 @@
 
       // tanks update
       // 分派：玩家用 CT_INPUT 快照输入；敌人走 EnemyAI.update(dt, obstacles, playerTanks)。
-      // 本地双人时 P2 已由 _driveP2Local 手动驱动，跳过 AI 更新。
+      // 本地双人时 P2 由 _p2Input + Tank.update 驱动（与 P1 同逻辑），跳过 AI 更新。
       const playerTanks = [];
       for (let i = 0; i < s.tanks.length; i++) {
         const pt = s.tanks[i];
@@ -303,13 +373,32 @@
       }
       for (let i = 0; i < s.tanks.length; i++) {
         const t = s.tanks[i]; if (!t || !t.alive) continue;
-        if (s.p2Local && t === s.p2) continue;
         try { BUFF.tickTimers(t, dt); } catch (_) {}
         try {
           if (typeof t.update !== 'function') continue;
           if (t.type === 'player') {
-            const inp = (global.CT_INPUT && typeof global.CT_INPUT.snapshot === 'function')
-              ? global.CT_INPUT.snapshot() : {};
+            let inp;
+            if (s.p2Local && t === s.p2) {
+              /* P2 与 P1 走完全相同的 Tank.update —— 同样的平移控制、加速度/摩擦、
+               * 碰撞解析、开火（Tank._fire）、技能（SKILLS[tankClass]）、传送门与增益，
+               * 只是键位不同：方向键移动 + Enter 开火 + 右Shift 技能。
+               * P2 没有鼠标瞄准 → turretWorldPoint 置空，炮塔朝向跟随车身。 */
+              t.update(dt, this._p2Input(), s.obstacles, s.tanks);
+              t.turretAngle = t.angle;
+              continue;
+            }
+            if (s.p2Local && t === s.p1) {
+              /* 本地双人：P1 独占 WASD，方向键（↑↓←→）专留给 P2。
+               * 否则 CT_INPUT.snapshot 会把方向键也算进 P1 的移动键 → P2 按方向键"没反应"。 */
+              const snap = global.CT_INPUT.snapshot();
+              const k = global.CT_INPUT.keys || new Set();
+              snap.up = k.has('w'); snap.down = k.has('s');
+              snap.left = k.has('a'); snap.right = k.has('d');
+              inp = snap;
+            } else {
+              inp = (global.CT_INPUT && typeof global.CT_INPUT.snapshot === 'function')
+                ? global.CT_INPUT.snapshot() : {};
+            }
             t.update(dt, inp, s.obstacles, s.tanks);
           } else {
             t.update(dt, s.obstacles, playerTanks);
@@ -372,69 +461,25 @@
       this._cleanupDeadEntities();
     },
 
-    /* ========== P2 本地输入驱动 ========== */
-    _driveP2Local(p2, dt) {
+    /* ========== P2 本地输入 ==========
+     * 只负责把 P2 的键位翻译成与 CT_INPUT.snapshot() 同构的输入对象，
+     * 之后交给 Tank.update 处理 —— 因此 P2 的行动逻辑与 P1 完全一致。 */
+    _p2Input() {
       try {
-        const k = INPUT.keys || new Set();
-        const isDown = (key) => k.has(key);
-        // 移动：↑↓←→
-        let turn = 0, fwd = 0;
-        if (isDown('arrowleft')) turn -= 1;
-        if (isDown('arrowright')) turn += 1;
-        if (isDown('arrowup')) fwd += 1;
-        if (isDown('arrowdown')) fwd -= 1;
-        if (p2.angle != null) p2.angle += turn * 3 * dt;
-        if (fwd !== 0 && p2.pos) {
-          const sp = (p2.muls && p2.muls.speed || 1) * 3;
-          p2.pos.x += Math.cos(p2.angle) * fwd * sp * dt * 60;
-          p2.pos.y += Math.sin(p2.angle) * fwd * sp * dt * 60;
-          if (p2.aabb) { p2.aabb.x = p2.pos.x - 28; p2.aabb.y = p2.pos.y - 28; }
-        }
-        // 射击：Enter
-        if (isDown('enter')) {
-          if ((p2.skillCdNow || 0) <= 0) {
-            this._p2Fire(p2);
-            p2.skillCdNow = (p2.muls && p2.muls.fireRate || 1) > 1.5 ? 0.35 : 0.5;
-          }
-        }
-        // 技能：RShift
-        if (isDown('rshift') || isDown('shiftright')) {
-          // 简化：P2 技能 = 发射反弹弹幕
-          if ((p2._p2SkillCd || 0) <= 0) {
-            this._p2Skill(p2);
-            p2._p2SkillCd = 12;
-          }
-        }
-        if (p2.skillCdNow > 0) p2.skillCdNow -= dt;
-        if (p2._p2SkillCd > 0) p2._p2SkillCd -= dt;
-      } catch (_) {}
-    },
-
-    _p2Fire(p2) {
-      const s = this.state; if (!s) return;
-      const bul = {
-        pos: { x: p2.pos.x, y: p2.pos.y },
-        vel: { x: Math.cos(p2.angle||0) * 8, y: Math.sin(p2.angle||0) * 8 },
-        radius: 5, damage: 1, bounces: BOUNCE_TIMES,
-        owner: 'p2', _ownerRef: p2, _ownerTeam: 2,
-        alive: true, _hitSet: new Set(), color: '#ff2a6d'
-      };
-      s.bullets.push(bul);
-      BUS.emit('duel:p2Fire', { shooter: p2 });
-    },
-
-    _p2Skill(p2) {
-      const s = this.state; if (!s) return;
-      // 环形 3 发反弹弹
-      for (let i = 0; i < 3; i++) {
-        const a = (p2.angle || 0) + (i - 1) * 0.4;
-        s.bullets.push({
-          pos: { x: p2.pos.x, y: p2.pos.y },
-          vel: { x: Math.cos(a) * 7, y: Math.sin(a) * 7 },
-          radius: 5, damage: 1, bounces: BOUNCE_TIMES,
-          owner: 'p2', _ownerRef: p2, _ownerTeam: 2,
-          alive: true, _hitSet: new Set(), color: '#ff2a6d'
-        });
+        // 运行时读取（顶部 const INPUT 是加载期空 stub，箭头键进不去）
+        const k = (global.CT_INPUT && global.CT_INPUT.keys) || (INPUT && INPUT.keys) || new Set();
+        return {
+          directMove: true,                 // 与 P1 相同的平移式控制
+          up: k.has('arrowup'),
+          down: k.has('arrowdown'),
+          left: k.has('arrowleft'),
+          right: k.has('arrowright'),
+          shoot: k.has('enter'),            // 开火：Enter
+          skill: k.has('shiftright') || k.has('shift'),  // 技能：右Shift
+          turretWorldPoint: null            // P2 无鼠标瞄准 → 炮塔跟随车身
+        };
+      } catch (_) {
+        return { directMove: true, up: false, down: false, left: false, right: false, shoot: false, skill: false, turretWorldPoint: null };
       }
     },
 
@@ -442,11 +487,13 @@
     _startRoundPrep() {
       const s = this.state; if (!s) return;
       s.phase = 'PREPARING';
+      // 注意：结算锁 roundResolved 不在本函数重置（本函数会被 _onRoundEnd 同帧同步调用），
+      // 否则同帧双亡时锁会被立刻解开、二次结算。锁在 _startCombatPhase（新一局战斗真正开始）才清。
       // 重生双方
       const sp1 = { x: MAP_W * 0.25, y: MAP_H * 0.75 };
       const sp2 = { x: MAP_W * 0.75, y: MAP_H * 0.25 };
       s.p1.alive = true; s.p1.hp = s.p1.maxHp; s.p1.pos.x = sp1.x; s.p1.pos.y = sp1.y;
-      if (s.p1.spawnPos) { s.p1.spawnPos.x = sp1.x; s.p1.spawnPos.y = sp2.y; }
+      if (s.p1.spawnPos) { s.p1.spawnPos.x = sp1.x; s.p1.spawnPos.y = sp1.y; }
       s.p2.alive = true; s.p2.hp = s.p2.maxHp; s.p2.pos.x = sp2.x; s.p2.pos.y = sp2.y;
       if (s.p2.spawnPos) { s.p2.spawnPos.x = sp2.x; s.p2.spawnPos.y = sp2.y; }
       // 重建地图（砖墙可毁，每局重置）
@@ -469,6 +516,7 @@
     _startCombatPhase() {
       const s = this.state; if (!s) return;
       s.phase = 'COMBAT';
+      s.roundResolved = false;   // 新一局战斗开始，解除上一局的结算锁
       s.roundTimeLeft = ROUND_TIME;
       s.powerups = [];            // 每局清空上一局残留道具
       s.pupTimer = PUP_FIRST;     // 重新计时随机掉落
@@ -479,6 +527,10 @@
 
     _onRoundEnd(winner) {
       const s = this.state; if (!s || !this.running) return;
+      // 同一局只结算一次：本地双人下两辆皆 player，近距离对射可能同帧双亡，
+      // 若已结算则直接忽略，避免二次 _nextRound → _startRoundPrep 把对手复活、攻击者反被记死。
+      if (s.roundResolved) return;
+      s.roundResolved = true;
       // 判定本局胜者
       let roundWinner = winner;
       if (!roundWinner) {
@@ -536,6 +588,7 @@
 
     _onTankDead(evt) {
       const s = this.state; if (!s || !this.running) return;
+      if (s.roundResolved) return;  // 本局已结算，忽略后续死亡事件
       const dead = evt && evt.dead; if (!dead) return;
       // 本局结束：对方胜
       const winner = (dead === s.p1) ? s.p2 : s.p1;
@@ -554,6 +607,10 @@
           s.wins = wins;
         }
       } catch (_) {}
+      // D-04：赛季结果上报（预留接口，未接入服务端时静默跳过）
+      if (global.CT_SEASON && typeof global.CT_SEASON.reportResult === 'function') {
+        try { global.CT_SEASON.reportResult({ mode: 'duel', victory: !!victory, wins: s.wins }); } catch (_) {}
+      }
       const payload = {
         victory: !!victory, mode: 'duel', round: s.round,
         p1Score: s.p1.score, p2Score: s.p2.score,

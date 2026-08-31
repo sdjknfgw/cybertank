@@ -37,6 +37,9 @@
     horde: 'HORDE', endless: 'ENDLESS',
     'king-hill': 'KING HILL', 'battle-royale': 'BATTLE ROYALE', duel: '1v1 DUEL', kingdefend: 'KING DEFEND'
   };
+  /* 只有这些模式有「波次」概念 —— 1v1（duel）/大逃杀没有波次，
+   * 此前顶栏恒显示「WAVE ? / NEXT」、左栏恒显示「NEXT WAVE · REPORT」，在 1v1 里全是误导信息。 */
+  const WAVE_MODES = { horde: 1, endless: 1, 'king-hill': 1, kingdefend: 1 };
 
   /* ---------- 敌人类型配色 ---------- */
   const ENEMY_META = {
@@ -311,11 +314,14 @@
       const pct = Math.round(payload.discount * 100);
       right.appendChild(el('div', { class: 'ct-prep-discount' }, '🔥 ' + pct + '% OFF'));
     }
-    const wave = el('div', { class: 'ct-prep-wave' },
-      'WAVE <b>' + ((payload.wave | 0) || '?') + '</b> / ' + (payload.isBoss ? 'BOSS' : 'NEXT')
-    );
-    right.appendChild(wave);
-    state.topLabelEl = wave;
+    // 波次信息仅波次模式显示（1v1 无波次，显示 WAVE ? 是误导）
+    if (WAVE_MODES[mode]) {
+      const wave = el('div', { class: 'ct-prep-wave' },
+        'WAVE <b>' + ((payload.wave | 0) || '?') + '</b> / ' + (payload.isBoss ? 'BOSS' : 'NEXT')
+      );
+      right.appendChild(wave);
+      state.topLabelEl = wave;
+    }
 
     top.appendChild(chip);
     top.appendChild(timerWrap);
@@ -439,8 +445,10 @@
     state.currentSeconds = (payload && payload.seconds) | 0;
 
     try {
+      const mode = (state.currentPayload && state.currentPayload.mode) || 'horde';
       root.appendChild(buildTopBar(state.currentPayload));
-      root.appendChild(buildReport(state.currentPayload));
+      // 敌情预告（NEXT WAVE · REPORT）只对波次模式有意义，1v1 不显示
+      if (WAVE_MODES[mode]) root.appendChild(buildReport(state.currentPayload));
       root.appendChild(buildReadyBtn());
     } catch (e) {
       console.warn('[CT_UI_PREP] build DOM failed:', e);

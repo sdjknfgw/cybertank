@@ -1,0 +1,18 @@
+{
+  "name": "cybertank-online",
+  "version": "1.0.0",
+  "description": "CyberTank 1v1 联机模式（Node.js + Socket.IO，权威服务端）",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node smoketest.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "playwright-core": "^1.62.1",
+    "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.3"
+  }
+}

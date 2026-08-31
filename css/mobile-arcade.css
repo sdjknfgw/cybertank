@@ -1,0 +1,281 @@
+/* ==========================================================
+ * CyberTank — mobile-arcade.css  (移动端街机皮肤)
+ * 作用域：仅 html.touch 生效（由 mobile.js 在触屏设备上添加）。
+ * 桌面端永远不会有 html.touch，因此本文件对桌面【零影响】。
+ * 设计目标：经典街机(arcade)视觉——像素描边、高对比霓虹、CRT 扫描线、
+ *          居中大尺寸触控区、横屏/竖屏自适应、动画零模糊(无 backdrop-filter)。
+ * ========================================================== */
+
+/* ---------- 0. 全局触摸行为：禁止滚动/缩放/选中，适配安全区 ---------- */
+html.touch,
+html.touch body {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    overscroll-behavior: none;
+    touch-action: none;
+}
+html.touch body {
+    margin: 0;
+    background: #05070f;
+    overflow: hidden;
+    font-family: "Courier New", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+/* CRT 扫描线叠层（仅装饰，不拦截事件） */
+html.touch body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 0, 0, 0) 0,
+        rgba(0, 0, 0, 0) 2px,
+        rgba(0, 0, 0, 0.16) 3px,
+        rgba(0, 0, 0, 0) 4px
+    );
+    opacity: 0.45;
+    mix-blend-mode: multiply;
+}
+
+/* ---------- 1. 移动控制层 ---------- */
+#mobile-controls {
+    position: fixed;
+    inset: 0;
+    z-index: 600;
+    pointer-events: none;
+    touch-action: none;
+    font-family: "Courier New", ui-monospace, monospace;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+#mobile-controls * { box-sizing: border-box; }
+
+/* 摇杆（左下，半透明、贴角，尽量不遮挡地图） */
+.arc-base {
+    position: absolute;
+    pointer-events: auto;
+    width: 150px;
+    height: 150px;
+    border-radius: 50%;
+    left: calc(env(safe-area-inset-left, 0px) + 14px);
+    bottom: 16px;
+    background: rgba(7, 16, 28, 0.22);
+    border: 3px solid rgba(0, 229, 255, 0.55);
+    box-shadow: 0 0 0 3px rgba(5,7,15,0.35), 0 0 12px rgba(0, 229, 255, 0.28), inset 0 0 12px rgba(0, 229, 255, 0.14);
+}
+.arc-base::before {
+    content: "";
+    position: absolute;
+    inset: 18px;
+    border-radius: 50%;
+    border: 2px dashed rgba(0, 229, 255, 0.5);
+}
+/* 摇杆十字准星（像素风） */
+.arc-cross {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 22px;
+    height: 22px;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+.arc-cross::before,
+.arc-cross::after {
+    content: "";
+    position: absolute;
+    background: rgba(0, 229, 255, 0.50);
+}
+.arc-cross::before { left: 50%; top: 0; width: 3px; height: 100%; transform: translateX(-50%); }
+.arc-cross::after  { top: 50%; left: 0; height: 3px; width: 100%; transform: translateY(-50%); }
+
+.arc-knob {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 70px;
+    height: 70px;
+    margin: -35px 0 0 -35px;
+    border-radius: 50%;
+    background: rgba(255, 42, 157, 0.55);
+    border: 3px solid rgba(255, 255, 255, 0.85);
+    box-shadow: 4px 4px 0 rgba(5,7,15,0.5), 0 0 12px rgba(255, 42, 157, 0.5);
+    transition: transform 0.04s linear;
+}
+
+/* 开火（右下，最大、最醒目、贴角，半透明不挡地图） */
+.arc-fire {
+    position: absolute;
+    pointer-events: auto;
+    right: calc(env(safe-area-inset-right, 0px) + 16px);
+    bottom: 20px;
+    width: 110px;
+    height: 110px;
+    border-radius: 50%;
+    background: rgba(255, 210, 63, 0.50);
+    color: #05070f;
+    border: 4px solid rgba(5,7,15,0.65);
+    box-shadow: 0 0 0 3px rgba(255,210,63,0.32), 5px 5px 0 rgba(5,7,15,0.45), 0 0 16px rgba(255, 210, 63, 0.40);
+    font-weight: 800;
+    font-size: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.arc-fire:active {
+    transform: translate(3px, 3px);
+    box-shadow: 0 0 0 4px #ffd23f, 2px 2px 0 #05070f, 0 0 26px rgba(255, 210, 63, 0.9);
+}
+
+/* 技能（开火左上方，半透明） */
+.arc-skill {
+    position: absolute;
+    pointer-events: auto;
+    right: calc(env(safe-area-inset-right, 0px) + 20px);
+    bottom: 140px;
+    width: 78px;
+    height: 78px;
+    border-radius: 50%;
+    background: rgba(57, 255, 20, 0.50);
+    color: #05070f;
+    border: 4px solid rgba(5,7,15,0.65);
+    box-shadow: 0 0 0 3px rgba(57,255,20,0.32), 5px 5px 0 rgba(5,7,15,0.45), 0 0 12px rgba(57, 255, 20, 0.45);
+    font-weight: 800;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.arc-skill:active { transform: translate(3px, 3px); }
+
+/* 道具槽（顶部居中，5 个） */
+.arc-slots {
+    position: absolute;
+    pointer-events: none;
+    top: calc(env(safe-area-inset-top, 0px) + 12px);
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 14px;
+}
+.arc-slot {
+    pointer-events: auto;
+    width: 60px;
+    height: 60px;
+    border-radius: 8px;
+    background: rgba(10, 20, 34, 0.50);
+    border: 3px solid rgba(0, 229, 255, 0.7);
+    color: #00e5ff;
+    box-shadow: 3px 3px 0 rgba(5,7,15,0.45), 0 0 8px rgba(0, 229, 255, 0.30);
+    font-weight: 800;
+    font-size: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+/* 防误触（D-07）：首次点击点亮「待确认」态，再次点击才触发 */
+.arc-slot.armed {
+    border-color: #fff;
+    background: rgba(255, 42, 157, 0.40);
+    box-shadow: 0 0 0 3px #ff2a9d, 0 0 16px rgba(255, 42, 157, 0.70);
+    animation: arc-pulse 0.7s ease-in-out infinite;
+}
+@keyframes arc-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+.arc-slot:active { transform: translate(2px, 2px); border-color: #fff; }
+
+/* 横屏：空间更矮，控件再缩一号，进一步让出地图 */
+@media (orientation: landscape) {
+    html.touch .arc-base  { width: 130px; height: 130px; bottom: 14px; left: calc(env(safe-area-inset-left, 0px) + 12px); }
+    html.touch .arc-knob  { width: 58px; height: 58px; margin: -29px 0 0 -29px; }
+    html.touch .arc-fire  { width: 100px; height: 100px; bottom: 16px; right: calc(env(safe-area-inset-right, 0px) + 14px); font-size: 19px; }
+    html.touch .arc-skill { width: 70px; height: 70px; bottom: 128px; right: calc(env(safe-area-inset-right, 0px) + 18px); font-size: 14px; }
+    html.touch .arc-slot  { width: 52px; height: 52px; font-size: 17px; }
+    html.touch .arc-slots { top: calc(env(safe-area-inset-top, 0px) + 8px); gap: 12px; }
+}
+
+/* ---------- 2. 街机化的菜单/弹窗/按钮（仅移动端，桌面无关） ---------- */
+html.touch .neon-panel {
+    border-radius: 0 !important;
+    border: 3px solid var(--neon-cyan, #00e5ff) !important;
+    box-shadow: 0 0 0 3px #05070f, 6px 6px 0 #05070f, 0 0 24px rgba(0, 229, 255, 0.35) !important;
+    background: #070d18 !important;
+}
+html.touch .neon-btn {
+    min-height: 52px;
+    font-size: 16px;
+    border-radius: 0 !important;
+    border-width: 3px !important;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+html.touch .neon-btn:active { transform: translate(2px, 2px); }
+
+/* 弹窗/菜单/商店/BUFF/备战/结算容器：满屏、可滚动、留出安全区 */
+html.touch #main-menu-wrap,
+html.touch #shop-ui-root,
+html.touch #buff-ui-root,
+html.touch #prep-ui-root,
+html.touch #result-ui-root,
+html.touch #modal-root {
+    padding: calc(env(safe-area-inset-top, 0px) + 8px) 10px calc(env(safe-area-inset-bottom, 0px) + 8px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+html.touch .ct-modal-panel,
+html.touch #shop-ui-root .neon-panel,
+html.touch #buff-ui-root .neon-panel,
+html.touch #prep-ui-root .neon-panel,
+html.touch #result-ui-root .neon-panel,
+html.touch #main-menu-wrap .neon-panel {
+    max-height: 94vh;
+    overflow-y: auto;
+    width: 100% !important;
+    max-width: 680px !important;
+}
+
+/* HUD 底部道具栏放大（移动端点按更友好） */
+html.touch #game-hud-wrap .inv-slot {
+    width: 54px !important;
+    height: 54px !important;
+    font-size: 22px;
+}
+
+/* Toast 在移动端更宽，避免被按钮遮挡 */
+html.touch #toast-root {
+    width: auto !important;
+    left: 12px;
+    right: 12px;
+    max-width: none !important;
+    top: calc(env(safe-area-inset-top, 0px) + 70px) !important;
+}
+
+/* ---------- 3. 横屏引导（D-11）：仅触屏设备 + 竖屏时显示 ---------- */
+.ct-rotate-guide {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 9500;
+    background: rgba(5, 7, 15, 0.96);
+    color: #00e5ff;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 18px;
+    padding: 24px;
+    font-family: "Courier New", ui-monospace, monospace;
+}
+.ct-rotate-guide .ico {
+    font-size: 64px;
+    animation: ct-rotate-anim 1.6s ease-in-out infinite;
+}
+.ct-rotate-guide .ttl { font-size: 20px; letter-spacing: 2px; }
+.ct-rotate-guide .sub { font-size: 13px; color: #9fb4d8; max-width: 280px; line-height: 1.6; }
+@keyframes ct-rotate-anim { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(90deg); } }
+@media (orientation: portrait) {
+    html.touch .ct-rotate-guide { display: flex; }
+}

@@ -1,9 +1,9 @@
 /* 由 extract-config.js 从 index.html 内联配置自动生成，请勿手改 */
 module.exports = {
   "content": [
-    "D:\\tark\\index.html",
-    "D:\\tark\\js\\**\\*.js",
-    "D:\\tark\\css\\**\\*.css"
+    "D:/tark/index.html",
+    "D:/tark/js/**/*.js",
+    "D:/tark/css/**/*.css"
   ],
   "theme": {
     "extend": {

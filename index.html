@@ -9,7 +9,7 @@
     <!-- ===== Tailwind CSS 3 CDN ===== -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-        tailwind.config = {
+        if (window.tailwind) tailwind.config = {
             theme: {
                 extend: {
                     colors: {
@@ -82,6 +82,8 @@
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&family=Share+Tech+Mono&family=JetBrains+Mono:wght@400;700;800&display=swap" rel="stylesheet">
     <!-- ===== 主样式表 ===== -->
     <link rel="stylesheet" href="css/style.css">
+    <!-- 移动端街机皮肤：全部规则限定在 html.touch 作用域，桌面端无任何影响 -->
+    <link rel="stylesheet" href="css/mobile-arcade.css">
     <!-- Lucide Icons：曾从 unpkg CDN 加载，但全项目从未调用（无 data-lucide/createIcons），
          且会触发 Edge 跟踪防护告警，已移除。如后续需要图标库建议本地化引入。 -->
 </head>
@@ -126,8 +128,15 @@
         </div>
     </div>
 
-    <!-- ===== 第 3 层：移动端控制（Task11 实现） ===== -->
-    <div id="mobile-controls" class="hidden"></div>
+    <!-- ===== 第 3 层：移动端控制（仅触屏设备激活，桌面端保持隐藏） ===== -->
+    <div id="mobile-controls" class="hidden" style="display:none"></div>
+
+    <!-- ===== 横屏引导层（仅触屏 + 竖屏显示，见 css/mobile-arcade.css，D-11） ===== -->
+    <div id="ct-rotate-guide" class="ct-rotate-guide" aria-hidden="true">
+        <div class="ico">📱</div>
+        <div class="ttl">请旋转设备至横屏</div>
+        <div class="sub">横屏可获得更完整的战场视野与更舒适的操作空间</div>
+    </div>
 
     <!-- ===== 30 个脚本按顺序加载 ===== -->
     <script src="js/utils/storage.js"          onerror="void 0"></script>
@@ -153,12 +162,15 @@
     <script src="js/ui/buff-ui.js"             onerror="void 0"></script>
     <script src="js/ui/shop-ui.js"             onerror="void 0"></script>
     <script src="js/ui/prep-ui.js"             onerror="void 0"></script>
+    <!-- 移动端街机控制层：仅触屏/窄屏设备激活，桌面端走门控 no-op，零副作用 -->
+    <script src="js/ui/mobile.js"              onerror="void 0"></script>
     <script src="js/game/engine.js"            onerror="void 0"></script>
     <script src="js/modes/horde.js"            onerror="void 0"></script>
     <script src="js/modes/battle-royale.js"    onerror="void 0"></script>
     <script src="js/modes/king-hill.js"        onerror="void 0"></script>
     <script src="js/modes/duel.js"             onerror="void 0"></script>
     <script src="js/modes/kingdefend.js"       onerror="void 0"></script>
+    <script src="js/modes/online.js"           onerror="void 0"></script>
     <script src="js/main.js"                   onerror="void 0"></script>
 
     <!-- ===== 启动脚本（容错） ===== -->

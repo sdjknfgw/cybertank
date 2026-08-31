@@ -304,17 +304,18 @@
     };
 
     /* ---------- startGame ---------- */
-    HUD.startGame = function (mode, tank, skin, difficulty) {
+    HUD.startGame = function (mode, tank, skin, difficulty, opponent, p2Tank) {
         inj();
         /* 增益倒计时不再持有副本状态：胶囊直接读 player.tempBuffs，
          * 新一局用全新 tank 对象，旧 buff 自然不复存在，无需清空。 */
         _buffAccum = 0;
         _lastInvLen = 0;
+        _dom.p2 = null;   // 重开需清空上一局的 P2 HUD 引用，否则会更新到已卸载的旧节点
         /* 记录当前模式：updateHud 的波次显示按模式分支
          * （无尽 ∞ / 经典 20 波 / 1v1 局数 / 据点节数 / 大逃杀生存） */
         HUD._mode = mode || '';
         /* 记录本次对局选项：战败后「继续战斗」可按相同模式/地图/玩法直接重开 */
-        global.CT_LAST_MODE_OPTS = { mode: mode || 'horde', tank: tank, skin: skin, difficulty: difficulty };
+        global.CT_LAST_MODE_OPTS = { mode: mode || 'horde', tank: tank, skin: skin, difficulty: difficulty, opponent: opponent || 'ai', p2Tank: p2Tank || 'same' };
         const menu = document.getElementById('main-menu-wrap');
         const hud = document.getElementById('game-hud-wrap');
         if (menu) menu.classList.add('hidden');
@@ -436,10 +437,13 @@
         // --- 右下：操作提示 ---
         const br = h('div', 'absolute bottom-4 right-4 pointer-events-auto hide-sm');
         const hintCard = h('div', 'hud-glass hud-corner px-4 py-3 text-[11px] text-text-mid leading-7 font-mono');
+        const _p2LocalHint = (opponent === 'local');
         hintCard.innerHTML =
-            '<div><span class="hint-kbd">W</span><span class="hint-kbd">A</span><span class="hint-kbd">S</span><span class="hint-kbd">D</span> 移动</div>' +
-            '<div><span class="hint-kbd">空格</span> 射击 · <span class="hint-kbd">E</span> 技能</div>' +
-            '<div><span class="hint-kbd">1</span><span class="hint-kbd">2</span><span class="hint-kbd">3</span><span class="hint-kbd">4</span><span class="hint-kbd">5</span> 道具</div>';
+            '<div><span class="hint-kbd">W</span><span class="hint-kbd">A</span><span class="hint-kbd">S</span><span class="hint-kbd">D</span> 移动 · <span class="hint-kbd">空格</span> 射击 · <span class="hint-kbd">E</span> 技能</div>' +
+            (_p2LocalHint
+              ? '<div style="color:#ff8fd0"><span class="hint-kbd">↑</span><span class="hint-kbd">↓</span><span class="hint-kbd">←</span><span class="hint-kbd">→</span> P2移动 · <span class="hint-kbd">Enter</span> 射击 · <span class="hint-kbd">右Shift</span> 技能</div>'
+              : '') +
+            '<div><span class="hint-kbd">1</span>~<span class="hint-kbd">5</span> 道具</div>';
         br.appendChild(hintCard);
         hud.appendChild(br);
 
@@ -519,11 +523,19 @@
 
         // 模式钩子
         try {
-            if (typeof global.CT_PREP === 'object' && global.CT_PREP && typeof global.CT_PREP.start === 'function') global.CT_PREP.start({ mode, tank, skin, difficulty });
+            if (typeof global.CT_PREP === 'object' && global.CT_PREP && typeof global.CT_PREP.start === 'function') global.CT_PREP.start({ mode, tank, skin, difficulty, opponent: opponent || 'ai' });
         } catch (_) {}
         try {
             const key = 'CT_MODE_' + ({ royale:'BR', kinghill:'KH', horde:'HORDE', duel:'DUEL', kingdefend:'KINGDEFEND' }[mode] || 'HORDE');
-            if (typeof global[key] === 'object' && global[key] && typeof global[key].start === 'function') global[key].start({ tank, skin, difficulty });
+            if (typeof global[key] === 'object' && global[key] && typeof global[key].start === 'function') global[key].start({ tank, skin, difficulty, opponent: opponent || 'ai', p2Tank: p2Tank || 'same' });
+        } catch (_) {}
+
+        // 本地双人：构建 P2 独立 HUD（血条/护盾/技能条），主题色取 P2 车型配色
+        try {
+            const _gs = global.CT_ENGINE && global.CT_ENGINE.gameState;
+            if (_gs && (opponent === 'local' || _gs.p2Local) && _gs.p2) {
+                _buildP2Hud(_gs);
+            }
         } catch (_) {}
 
         // 注册「玩家头顶光标」（全局 fx，仅注册一次；菜单态 gameState 为空则自动跳过）
@@ -684,6 +696,78 @@
      * 参数可缺省：默认直接从 CT_ENGINE.gameState 读取玩家与状态，
      * 保证血条/护盾/技能/波次实时联动（此前调用方传 null 导致血条永不变化）。
      */
+    /* ---------- P2 独立 HUD（本地双人） ----------
+     * 镜像 P1 的「血条 + 护盾 + 技能冷却」三件套，放置于右上角，
+     * 主题色取 P2 真实车型配色（state.p2.color，与菜单/duel.js 同一套 TANK_COLORS）。
+     * 仅本地双人（state.p2Local）时存在；AI 对手不构建，避免与「敌方」概念混淆。 */
+    function _buildP2Hud(state) {
+        if (_dom.p2 || !state || !state.p2 || !_dom.root) return;
+        const p2 = state.p2;
+        const col = p2.color || '#ff2a6d';
+        const tr = h('div', 'hud-glass hud-corner absolute top-4 right-4 px-4 py-3 pointer-events-auto w-fit min-w-0');
+        // 角色头像（主题色描边）
+        const tRow = h('div', 'flex items-center gap-3 mb-2.5 flex-row-reverse');
+        const av = h('div', 'tank-avatar', '🚀');
+        av.style.borderColor = col; av.style.boxShadow = '0 0 8px ' + col;
+        const nameCol = h('div', 'flex-1 text-right');
+        nameCol.appendChild(h('div', 'font-tech text-sm tracking-wider', 'PLAYER 2'));
+        nameCol.appendChild(h('div', 'font-mono text-text-hi text-sm', (p2.name || 'P2') + ' · ' + (p2.tankClass || '').toUpperCase()));
+        tRow.appendChild(av); tRow.appendChild(nameCol); tr.appendChild(tRow);
+        // 血条
+        const hpWrap = h('div', 'mb-2 relative');
+        const hpBar = h('div', 'hud-bar');
+        const hpFill = h('div', 'fill hp'); hpFill.style.width = '100%';
+        hpBar.appendChild(hpFill);
+        const hpTxt = h('div', 'absolute inset-0 flex items-center justify-center font-mono text-[12px] text-white font-bold tracking-widest', '100 / 100');
+        hpTxt.style.textShadow = '0 0 6px rgba(0,0,0,.9)';
+        hpWrap.appendChild(hpBar); hpWrap.appendChild(hpTxt); tr.appendChild(hpWrap);
+        // 护盾（叠加在血条上 薄）
+        const shWrap = h('div', 'mb-2 relative');
+        const shBar = h('div', 'hud-bar'); shBar.style.height = '10px';
+        const shFill = h('div', 'fill shield'); shFill.style.width = '0%';
+        shBar.appendChild(shFill);
+        const shTxt = h('div', 'absolute inset-0 flex items-center justify-center font-mono text-[10px] text-white', '🛡 SHIELD 0 / 50');
+        shTxt.style.textShadow = '0 0 4px rgba(0,0,0,.8)';
+        shWrap.appendChild(shBar); shWrap.appendChild(shTxt); tr.appendChild(shWrap);
+        // 技能冷却
+        const skWrap = h('div', 'relative');
+        const skBar = h('div', 'hud-bar'); skBar.style.height = '10px';
+        const skFill = h('div', 'fill skill'); skFill.style.width = '100%';
+        skBar.appendChild(skFill);
+        const skTxt = h('div', 'absolute inset-0 flex items-center justify-center font-tech text-[10px] text-glow-green font-bold', '⚡ READY');
+        skWrap.appendChild(skBar); skWrap.appendChild(skTxt); tr.appendChild(skWrap);
+        _dom.root.appendChild(tr);
+        _dom.p2 = { hpFill: hpFill, hpTxt: hpTxt, shFill: shFill, shTxt: shTxt, skFill: skFill, skTxt: skTxt, card: tr };
+    }
+
+    function _updateP2Hud(p2) {
+        if (!_dom.p2) return;
+        if (_dom.p2.hpFill) {
+            const pct = Math.max(0, p2.hp / (p2.maxHp || 100));
+            _dom.p2.hpFill.style.width = (pct * 100).toFixed(1) + '%';
+            if (_dom.p2.hpTxt) _dom.p2.hpTxt.textContent = Math.max(0, Math.ceil(p2.hp)) + ' / ' + (p2.maxHp || 100);
+        }
+        if (_dom.p2.shFill) {
+            const sh = p2.shield || 0, maxSh = p2.maxShield || 50;
+            _dom.p2.shFill.style.width = Math.max(0, sh / maxSh * 100).toFixed(1) + '%';
+            if (_dom.p2.shTxt) _dom.p2.shTxt.textContent = '🛡 SHIELD ' + Math.max(0, Math.ceil(sh)) + ' / ' + maxSh;
+        }
+        if (_dom.p2.skFill) {
+            const cd = (p2.skillCdNow || 0);
+            const maxCd = (p2.skillCdMax || 6);
+            if (cd <= 0) {
+                _dom.p2.skFill.style.width = '100%';
+                _dom.p2.skFill.classList.remove('cd');
+                if (_dom.p2.skTxt) { _dom.p2.skTxt.textContent = '⚡ READY'; _dom.p2.skTxt.className = 'absolute inset-0 flex items-center justify-center font-tech text-[10px] text-glow-green font-bold'; }
+            } else {
+                const p = Math.max(0, 1 - cd / maxCd);
+                _dom.p2.skFill.style.width = (p * 100).toFixed(1) + '%';
+                _dom.p2.skFill.classList.add('cd');
+                if (_dom.p2.skTxt) { _dom.p2.skTxt.textContent = '⏱ ' + cd.toFixed(1) + 's'; _dom.p2.skTxt.className = 'absolute inset-0 flex items-center justify-center font-mono text-[10px] text-white'; }
+            }
+        }
+    }
+
     HUD.updateHud = function (dt, state, player, wave) {
         const gs = global.CT_ENGINE && global.CT_ENGINE.gameState;
         if (!state) state = gs;
@@ -774,6 +858,14 @@
             }
         }
 
+        // P2 独立 HUD（本地双人）：与 P1 同步刷新血条/护盾/技能条
+        try {
+            if (state && state.p2Local && state.p2) {
+                if (!_dom.p2) _buildP2Hud(state);
+                if (_dom.p2) _updateP2Hud(state.p2);
+            }
+        } catch (_) {}
+
         // （雷达已按需求移除）
 
         // 左下 分数/连击/波次
@@ -792,7 +884,10 @@
                 if (m === 'horde' || m === 'endless') {
                     _dom.waveTxt.textContent = cur + ' / ∞';
                 } else if (m === 'duel') {
-                    _dom.waveTxt.textContent = cur + ' / 5';
+                    // 1v1：左下显示双方局分（BO5），不再显示“波次”
+                    const p1s = (state.p1 && state.p1.score) || 0;
+                    const p2s = (state.p2 && state.p2.score) || 0;
+                    _dom.waveTxt.textContent = 'P1 ' + p1s + ' : ' + p2s + ' P2';
                 } else if (m === 'kinghill') {
                     _dom.waveTxt.textContent = cur + ' / 3';
                 } else if (m === 'kingdefend') {
@@ -806,7 +901,7 @@
                 // 波次标签随模式语义变化（WAVE / SECTION / ROUND / SURVIVE）
                 if (_dom.waveLabel) {
                     const lbl = (m === 'kinghill') ? 'SECTION'
-                        : (m === 'duel') ? 'ROUND'
+                        : (m === 'duel') ? 'SCORE'
                         : (m === 'royale') ? 'SURVIVE'
                         : 'WAVE';
                     if (_dom.waveLabel.textContent !== lbl) _dom.waveLabel.textContent = lbl;
