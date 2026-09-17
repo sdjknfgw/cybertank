@@ -1,7 +1,8 @@
 /* =========================================================
  * CyberTank · 地形/障碍实体模块
  * 命名空间: window.CT_OBSTACLE
- * 7 种地形: WallBrick / WallSteel / Bush / Water / Ice / Mud / Portal
+ * 10 种地形: WallBrick / WallSteel / Bush / Water / Ice / Mud / Portal
+ *            GlassWall(玻璃砖) / SpikeField(尖刺区) / RepairPad(维修站)
  * 辅助: createMap(template) 根据字符模板生成 2D 格子地图
  * ========================================================= */
 (function (global) {
@@ -75,9 +76,9 @@
     if (this._teleportCd > 0) this._teleportCd = Math.max(0, this._teleportCd - dt);
   };
   BaseObstacle.prototype.render = function () { /* 子类实现 */ };
-  /** 核弹/激光专用：强制摧毁 */
+  /** 核弹/激光专用：强制摧毁（玻璃与砖同为可破坏材质） */
   BaseObstacle.prototype.destroyForced = function () {
-    if (this.type === 'steel' || this.type === 'brick') {
+    if (this.type === 'steel' || this.type === 'brick' || this.type === 'glass') {
       this.hp = 0;
       this.alive = false;
     }
@@ -456,10 +457,305 @@
   };
 
   /* =========================================================
+   * 公共工具：秒级时间戳 / 动态地形渲染钩子
+   * main.js 的障碍层会把静态地形烘焙进离屏缓存、只对 water/portal/mine
+   * 每帧重绘；尖刺区/维修站带周期动画（脉冲/旋转），在不改 main.js 的前提
+   * 下由本模块向 CT_ENGINE 注册一个 obstacle 层补充渲染，每帧把带
+   * _dynRender 标记的存活障碍按当前相机重绘（与 water/portal 同思路）。
+   * ========================================================= */
+  function _nowSec() {
+    try {
+      if (global.performance && typeof global.performance.now === 'function') {
+        return global.performance.now() / 1000;
+      }
+    } catch (_) { /* noop */ }
+    return Date.now() / 1000;
+  }
+  var _dynHookOn = false;
+  function _ensureDynHook() {
+    if (_dynHookOn) return;
+    var E = global.CT_ENGINE;
+    if (!E || typeof E.registerRender !== 'function') return;
+    _dynHookOn = true;
+    E.registerRender(function (ctx) {
+      var gs = E.gameState;
+      if (!gs || !gs.obstacles || !gs.obstacles.length) return;
+      var R = global.CT_RENDERER;
+      if (!R || !R.camera) return;
+      var rc = R.camera;
+      var vpW = R.viewport ? R.viewport.w : 0, vpH = R.viewport ? R.viewport.h : 0;
+      var zm = rc.zoom || 1;
+      /* 与 main.js 实体层一致的相机换算（world - cam.x) * scale + w/2） */
+      var cam = { x: (rc.x || 0) + vpW / 2 / zm, y: (rc.y || 0) + vpH / 2 / zm, scale: zm, w: vpW, h: vpH, zoom: zm };
+      for (var i = 0; i < gs.obstacles.length; i++) {
+        var o = gs.obstacles[i];
+        if (!o || o.alive === false || !o._dynRender) continue;
+        try { if (typeof o.render === 'function') o.render(ctx, cam); } catch (_) {}
+      }
+    }, 'obstacle');
+  }
+  /** 烘焙用"中性相机"特征（w=0/h=0 且无 zoom）：动态地形据此跳过静态烘焙 */
+  function _isBakeCamera(camera) {
+    return !!camera && camera.w === 0 && camera.h === 0 && camera.zoom === undefined;
+  }
+
+  /* =========================================================
+   * 8) GlassWall 玻璃砖：挡车挡弹、hp=1 一枪即碎；
+   *    受击/强制摧毁时（alive 置 false）触发 CT_PARTICLES.explode 碎裂特效。
+   *    子弹伤害结算沿用模式内的通用规则（有限 hp 的障碍都会被子弹扣血）。
+   * ========================================================= */
+  function GlassWall(opts) {
+    opts = opts || {};
+    opts.type = 'glass';
+    opts.hp = opts.hp == null ? 1 : opts.hp;
+    opts.blockTank = true;
+    opts.blockBullet = true;
+    BaseObstacle.call(this, opts);
+    /* 拦截 alive 写入：任何路径把 alive 置 false（子弹打碎/核弹清除）都触发碎裂特效 */
+    var _alive = true;
+    Object.defineProperty(this, 'alive', {
+      get: function () { return _alive; },
+      set: function (v) {
+        if (!v && _alive) this._shatter();
+        _alive = v;
+      },
+      configurable: true,
+      enumerable: true
+    });
+  }
+  GlassWall.prototype = Object.create(BaseObstacle.prototype);
+  GlassWall.prototype.constructor = GlassWall;
+  /** 碎裂：粒子系统是屏幕空间坐标，先把世界中心点换算到屏幕 */
+  GlassWall.prototype._shatter = function () {
+    try {
+      var cx = this._box.x + this._box.w / 2;
+      var cy = this._box.y + this._box.h / 2;
+      var sx = cx, sy = cy;
+      var R = global.CT_RENDERER;
+      if (R && typeof R.worldToScreen === 'function') {
+        var p = R.worldToScreen(cx, cy);
+        sx = p.x; sy = p.y;
+      }
+      var P = global.CT_PARTICLES;
+      if (P && typeof P.explode === 'function') P.explode(sx, sy, 1);
+    } catch (_) { /* noop */ }
+  };
+  GlassWall.prototype.render = function (ctx, camera) {
+    if (!this.alive) return;
+    var x = worldToScreenX(this._box.x, camera);
+    var y = worldToScreenY(this._box.y, camera);
+    var w = this._box.w * (camera ? (camera.scale || 1) : 1);
+    var h = this._box.h * (camera ? (camera.scale || 1) : 1);
+    ctx.save();
+    /* 半透明青色砖体 */
+    ctx.fillStyle = '#7df9ff55';
+    ctx.fillRect(x, y, w, h);
+    /* 内部斜向高光条纹 */
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 1.5;
+    for (var i = 0; i < 3; i++) {
+      var oy = y + h * (0.18 + i * 0.32);
+      ctx.beginPath();
+      ctx.moveTo(x, oy);
+      ctx.lineTo(x + w * (0.18 + i * 0.32), y);
+      ctx.stroke();
+    }
+    /* 白色高光描边（微发光） */
+    ctx.shadowColor = '#c8fbff';
+    ctx.shadowBlur = 8;
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    ctx.restore();
+  };
+
+  /* =========================================================
+   * 9) SpikeField 尖刺区：不挡车不挡弹，周期 0.8s 对压在区上的
+   *    坦克造成 3 点伤害（对所有坦克生效；同一坦克受击后 0.8s 免疫，
+   *    用 tank._spikeCd 时间戳实现）。
+   * ========================================================= */
+  function SpikeField(opts) {
+    opts = opts || {};
+    opts.type = 'spike';
+    opts.hp = Infinity;
+    opts.blockTank = false;
+    opts.blockBullet = false;
+    BaseObstacle.call(this, opts);
+    /** 渲染脉冲相位（随机错开，避免全场尖刺同步闪烁） */
+    this._phase = Math.random() * Math.PI * 2;
+    /** 伤害脉冲计时时钟（随机初相 → 各刺区伤害节拍错开） */
+    this._atkClock = Math.random() * 0.8;
+    /** 动态渲染标记：走本模块的每帧重绘钩子 */
+    this._dynRender = true;
+    _ensureDynHook();
+  }
+  SpikeField.prototype = Object.create(BaseObstacle.prototype);
+  SpikeField.prototype.constructor = SpikeField;
+  SpikeField.prototype.update = function (dt) {
+    BaseObstacle.prototype.update.call(this, dt);
+    this._atkClock += (dt || 0);
+    if (this._atkClock < 0.8) return;
+    this._atkClock = 0;
+    /* 仅战斗期结算：准备期/选卡期玩家无法还手，站着掉血体验太差 */
+    var gs = global.CT_ENGINE && global.CT_ENGINE.gameState;
+    if (!gs || !gs.tanks || gs.phase !== 'COMBAT') return;
+    var now = _nowSec();
+    for (var i = 0; i < gs.tanks.length; i++) {
+      var t = gs.tanks[i];
+      if (!t || !t.alive) continue;
+      var ta = t.aabb;
+      if (!ta) continue;
+      var tb = this._box;
+      var overlap = !(ta.x + ta.w < tb.x || tb.x + tb.w < ta.x ||
+                      ta.y + ta.h < tb.y || tb.y + tb.h < ta.y);
+      if (!overlap) continue;
+      /* 同一坦克受击后 0.8s 免疫（跨刺区共享时间戳） */
+      if (typeof t._spikeCd === 'number' && now < t._spikeCd) continue;
+      t._spikeCd = now + 0.8;
+      this._stab(t);
+    }
+  };
+  /** 对单辆坦克结算 3 点刺伤（伤害流程与模式内子弹伤害保持一致） */
+  SpikeField.prototype._stab = function (t) {
+    var dmg = 3;
+    if (typeof t.takeDamage === 'function') {
+      /* Tank.takeDamage 内部已处理护盾/减伤/无敌与死亡事件 */
+      try { t.takeDamage(dmg, 'spike'); } catch (_) { t.hp -= dmg; }
+    } else {
+      dmg *= (t.muls && t.muls.dr != null ? Math.max(0, 1 - t.muls.dr) : 1);
+      if (t.shield > 0) {
+        var absorb = Math.min(t.shield, dmg);
+        t.shield -= absorb;
+        dmg -= absorb;
+      }
+      t.hp -= dmg;
+      if (t.hp <= 0 && t.alive) {
+        t.alive = false;
+        emitGlobal('tank:dead', { tank: t, dead: t, source: 'spike' });
+      }
+    }
+    emitGlobal('tank:hit', { target: t, dmg: 3, attacker: null, source: 'spike' });
+  };
+  SpikeField.prototype.render = function (ctx, camera) {
+    if (!this.alive) return;
+    /* 静态烘焙用的中性相机：跳过（本类带脉冲动画，只走动态渲染钩子） */
+    if (_isBakeCamera(camera)) return;
+    var x = worldToScreenX(this._box.x, camera);
+    var y = worldToScreenY(this._box.y, camera);
+    var w = this._box.w * (camera ? (camera.scale || 1) : 1);
+    var h = this._box.h * (camera ? (camera.scale || 1) : 1);
+    /* 周期脉冲亮度：0~1 */
+    var pulse = 0.5 + 0.5 * Math.sin(this._t * 7.8 + this._phase);
+    ctx.save();
+    /* 暗红地面 */
+    ctx.fillStyle = 'rgba(88,12,26,0.88)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = 'rgba(255,56,96,0.35)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    /* 三排三角尖刺（#ff3860，随脉冲微发光） */
+    ctx.shadowColor = '#ff3860';
+    ctx.shadowBlur = 4 + 8 * pulse;
+    ctx.fillStyle = '#ff3860';
+    var rows = 3, cols = 4;
+    for (var r = 0; r < rows; r++) {
+      for (var c = 0; c < cols; c++) {
+        /* 奇偶行错位排布，像钉板 */
+        var cx = x + (c + 0.5 + (r % 2 ? 0.25 : -0.25)) * (w / cols);
+        var cy = y + (r + 0.35) * (h / rows);
+        var half = Math.min(w / cols, h / rows) * 0.42;
+        ctx.beginPath();
+        ctx.moveTo(cx - half, cy + half * 0.8);
+        ctx.lineTo(cx, cy - half);
+        ctx.lineTo(cx + half, cy + half * 0.8);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  };
+
+  /* =========================================================
+   * 10) RepairPad 维修站：不挡车不挡弹；站上维修站的玩家坦克
+   *     每秒回复 4 HP（不超 maxHp），对敌方坦克无效。
+   * ========================================================= */
+  function RepairPad(opts) {
+    opts = opts || {};
+    opts.type = 'repair';
+    opts.hp = Infinity;
+    opts.blockTank = false;
+    opts.blockBullet = false;
+    BaseObstacle.call(this, opts);
+    this._dynRender = true;
+    _ensureDynHook();
+  }
+  RepairPad.prototype = Object.create(BaseObstacle.prototype);
+  RepairPad.prototype.constructor = RepairPad;
+  RepairPad.prototype.update = function (dt) {
+    BaseObstacle.prototype.update.call(this, dt);
+    var gs = global.CT_ENGINE && global.CT_ENGINE.gameState;
+    if (!gs || !gs.tanks) return;
+    for (var i = 0; i < gs.tanks.length; i++) {
+      var t = gs.tanks[i];
+      if (!t || !t.alive || t.type !== 'player') continue;
+      if (!(t.maxHp > 0) || !(t.hp < t.maxHp)) continue;
+      var ta = t.aabb;
+      if (!ta) continue;
+      var tb = this._box;
+      var overlap = !(ta.x + ta.w < tb.x || tb.x + tb.w < ta.x ||
+                      ta.y + ta.h < tb.y || tb.y + tb.h < ta.y);
+      if (!overlap) continue;
+      /* 每秒 4 HP 持续回复 */
+      t.hp = Math.min(t.maxHp, t.hp + 4 * (dt || 0));
+    }
+  };
+  RepairPad.prototype.render = function (ctx, camera) {
+    if (!this.alive) return;
+    /* 静态烘焙用的中性相机：跳过（本类带旋转动画，只走动态渲染钩子） */
+    if (_isBakeCamera(camera)) return;
+    var x = worldToScreenX(this._box.x, camera);
+    var y = worldToScreenY(this._box.y, camera);
+    var w = this._box.w * (camera ? (camera.scale || 1) : 1);
+    var h = this._box.h * (camera ? (camera.scale || 1) : 1);
+    var cx = x + w / 2, cy = y + h / 2;
+    var r = Math.min(w, h) * 0.38;
+    ctx.save();
+    /* 绿色发光圆形平台 */
+    ctx.shadowColor = '#39ff14';
+    ctx.shadowBlur = 14;
+    ctx.fillStyle = 'rgba(57,255,20,0.16)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#39ff14';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    /* 十字标记 */
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(cx - r * 0.45, cy);
+    ctx.lineTo(cx + r * 0.45, cy);
+    ctx.moveTo(cx, cy - r * 0.45);
+    ctx.lineTo(cx, cy + r * 0.45);
+    ctx.stroke();
+    /* 缓慢旋转的外圈（缺口圆弧制造旋转感） */
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(this._t * 0.9);
+    ctx.strokeStyle = 'rgba(57,255,20,0.7)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.82, 0, Math.PI * 1.6);
+    ctx.stroke();
+    ctx.restore();
+    ctx.restore();
+  };
+
+  /* =========================================================
    * 根据字符串模板生成 2D 格子图
    * template: 二维字符串数组，或单字符串按行切分
    *   '1'=brick, '2'=steel, '3'=bush, '4'=water, '5'=ice, '6'=mud
-   *   'P'/'Q'=Portal（成对出现），其余字符忽略
+   *   'P'/'Q'=Portal（成对出现），'A'=玻璃砖, 'X'=尖刺区, 'R'=维修站，其余字符忽略
    * 返回: { obstacles, grid, cols, rows, tileSize }
    * ========================================================= */
   function createMap(template, tileSize) {
@@ -532,6 +828,15 @@
                 lastPortalId = null;
               }
             }
+            break;
+          case 'A':
+            ob = new GlassWall({ x: x, y: y, w: size, h: size });
+            break;
+          case 'X':
+            ob = new SpikeField({ x: x, y: y, w: size, h: size });
+            break;
+          case 'R':
+            ob = new RepairPad({ x: x, y: y, w: size, h: size });
             break;
           default:
             break;
@@ -663,7 +968,7 @@
    *       与底部若干行（玩家出生/基地走廊）；并以 4x4 粗网格校正，
    *       保证任意区域内至少有一块，彻底消除大块空白。
    * opts: { tile, cols, rows, density, skipBottomRows, ctor, rng }
-   *   ctor: { WallBrick, WallSteel, Bush, Water, Ice, Mud }（地形构造器）
+   *   ctor: { WallBrick, WallSteel, Bush, Water, Ice, Mud, GlassWall, SpikeField, RepairPad }（地形构造器）
    * ======================================================== */
   function scatterFill(obstacles, opts) {
     opts = opts || {};
@@ -708,12 +1013,16 @@
       var x = c * tile, y = r * tile;
       var role = rng();
       var block = null;
-      if (role < 0.50) block = ctor.WallBrick && new ctor.WallBrick({ x: x, y: y, w: tile, h: tile });
-      else if (role < 0.62) block = ctor.WallSteel && new ctor.WallSteel({ x: x, y: y, w: tile, h: tile });
-      else if (role < 0.76) block = ctor.Bush && new ctor.Bush({ x: x, y: y, w: tile, h: tile });
-      else if (role < 0.88) block = ctor.Mud && new ctor.Mud({ x: x, y: y, w: tile, h: tile });
-      else if (role < 0.96) block = ctor.Ice && new ctor.Ice({ x: x, y: y, w: tile, h: tile });
-      else block = ctor.Water && new ctor.Water({ x: x, y: y, w: tile, h: tile });
+      if (role < 0.42) block = ctor.WallBrick && new ctor.WallBrick({ x: x, y: y, w: tile, h: tile });
+      else if (role < 0.50) block = ctor.WallSteel && new ctor.WallSteel({ x: x, y: y, w: tile, h: tile });
+      else if (role < 0.62) block = ctor.Bush && new ctor.Bush({ x: x, y: y, w: tile, h: tile });
+      else if (role < 0.74) block = ctor.Mud && new ctor.Mud({ x: x, y: y, w: tile, h: tile });
+      else if (role < 0.82) block = ctor.Ice && new ctor.Ice({ x: x, y: y, w: tile, h: tile });
+      else if (role < 0.86) block = ctor.Water && new ctor.Water({ x: x, y: y, w: tile, h: tile });
+      /* 新地形：玻璃砖中等概率；尖刺区/维修站低概率（放在开阔散布里，覆盖既有结构的空当） */
+      else if (role < 0.94) block = ctor.GlassWall && new ctor.GlassWall({ x: x, y: y, w: tile, h: tile });
+      else if (role < 0.97) block = ctor.SpikeField && new ctor.SpikeField({ x: x, y: y, w: tile, h: tile });
+      else block = ctor.RepairPad && new ctor.RepairPad({ x: x, y: y, w: tile, h: tile });
       if (!block) block = ctor.WallBrick && new ctor.WallBrick({ x: x, y: y, w: tile, h: tile });
       if (!block) return;
       obstacles.push(block);
@@ -902,6 +1211,9 @@
     Ice: Ice,
     Mud: Mud,
     Portal: Portal,
+    GlassWall: GlassWall,
+    SpikeField: SpikeField,
+    RepairPad: RepairPad,
     createMap: createMap,
     findSafeSpawn: findSafeSpawn,
     scatterFill: scatterFill,

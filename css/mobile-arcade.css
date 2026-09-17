@@ -253,28 +253,35 @@ html.touch #toast-root {
     top: calc(env(safe-area-inset-top, 0px) + 70px) !important;
 }
 
-/* ---------- 3. 横屏引导（D-11）：仅触屏设备 + 竖屏时显示 ---------- */
+/* ---------- 3. 横屏引导（D-11）：竖屏时仅显示顶部横幅提示，不阻塞游戏 ----------
+ * 原版为全屏遮罩（竖屏完全不可玩，用户误以为游戏不支持手机）。
+ * 现改为顶部提示条：建议横屏但竖屏仍可正常游玩。 */
 .ct-rotate-guide {
     display: none;
     position: fixed;
-    inset: 0;
+    top: 0;
+    left: 0;
+    right: 0;
     z-index: 9500;
-    background: rgba(5, 7, 15, 0.96);
+    background: rgba(5, 7, 15, 0.92);
     color: #00e5ff;
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
     justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+    padding: 8px 14px calc(8px + env(safe-area-inset-top, 0px));
     text-align: center;
-    gap: 18px;
-    padding: 24px;
     font-family: "Courier New", ui-monospace, monospace;
+    border-bottom: 2px solid rgba(0, 229, 255, 0.4);
+    box-shadow: 0 4px 18px rgba(0, 229, 255, 0.25);
 }
 .ct-rotate-guide .ico {
-    font-size: 64px;
+    font-size: 26px;
     animation: ct-rotate-anim 1.6s ease-in-out infinite;
 }
-.ct-rotate-guide .ttl { font-size: 20px; letter-spacing: 2px; }
-.ct-rotate-guide .sub { font-size: 13px; color: #9fb4d8; max-width: 280px; line-height: 1.6; }
+.ct-rotate-guide .ttl { font-size: 14px; letter-spacing: 2px; }
+.ct-rotate-guide .sub { font-size: 11px; color: #9fb4d8; max-width: 260px; line-height: 1.4; }
 @keyframes ct-rotate-anim { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(90deg); } }
 @media (orientation: portrait) {
     html.touch .ct-rotate-guide { display: flex; }

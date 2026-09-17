@@ -183,6 +183,47 @@
         const prevBest = STORE.get(bestKey, 0) | 0;
         if (score > prevBest) STORE.set(bestKey, score);
 
+        /* ---------- 成绩上报全球排行 + 云档备份（仅登录态，全部静默降级） ----------
+         * 字段映射（各模式 _gameOver 的 payload / stats 实际字段）：
+         *   score    → stats.score
+         *   wave     → opts.wave（horde/kingdefend 顶层）|| stats.surviveWaves（kingdefend）|| 0
+         *   duration → stats.surviveTime（horde/battle-royale/king-hill/duel）|| stats.defendTime（kingdefend）|| 0
+         *   victory  → opts.victory
+         *   difficulty → opts.difficulty（kingdefend）|| stats.difficulty || CT_LAST_MODE_OPTS.difficulty
+         *   tank     → CT_LAST_MODE_OPTS.tank（hud.startGame 记录的本局出战坦克）
+         *   mode     → API 白名单值（royale→battle-royale、kinghill→king-hill、endless→horde…） */
+        try {
+            const BE = global.CT_BACKEND;
+            if (BE && typeof BE.isLoggedIn === 'function' && BE.isLoggedIn()) {
+                const apiMode = {
+                    horde: 'horde', endless: 'horde',
+                    royale: 'battle-royale', 'battle-royale': 'battle-royale',
+                    kinghill: 'king-hill', 'king-hill': 'king-hill',
+                    duel: 'duel', kingdefend: 'kingdefend', online: 'online'
+                }[mode];
+                if (apiMode && typeof BE.reportScore === 'function') {
+                    const last = global.CT_LAST_MODE_OPTS || {};
+                    BE.reportScore({
+                        mode: apiMode,
+                        score: Number(score) || 0,
+                        wave: Math.max(0, Number(opts.wave || stats.surviveWaves || stats.wave || 0) || 0),
+                        duration: Math.max(0, Number(stats.surviveTime || stats.defendTime || 0) || 0),
+                        victory: !!victory,
+                        difficulty: String(opts.difficulty || stats.difficulty || last.difficulty || 'normal'),
+                        tank: String(last.tank || 'assault')
+                    }).then(function (ok) {
+                        if (ok) {
+                            try { global.CT_TOAST && global.CT_TOAST('成绩已同步到全球排行', 'info'); } catch (_) {}
+                        }
+                    }).catch(function () {});
+                }
+                /* 云档：每次结算直接上传一次最新本地进度（简单实现，失败静默） */
+                if (typeof BE.uploadProfile === 'function') {
+                    BE.uploadProfile().catch(function () {});
+                }
+            }
+        } catch (_) {}
+
         // 底部按钮
         const btns = h('div', 'res-btns');
 

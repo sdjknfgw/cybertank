@@ -21,6 +21,12 @@ node_modules/
 # Temp deploy files
 upload-to-github.ps1
 
-# OS
-Thumbs.db
-.DS_Store
+# 运行时数据（含用户密码哈希，严禁上传）
+/data/
+__pycache__/
+
+# 本机无关目录/文件
+/飞书/
+网址.txt
+*.log
+.wrangler/

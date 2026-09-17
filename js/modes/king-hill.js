@@ -32,6 +32,10 @@
   const Ice        = OB_NS.Ice    || null;
   const Mud        = OB_NS.Mud    || null;
   const Portal     = OB_NS.Portal || null;
+  /* 新地形 II：玻璃砖(一枪即碎) / 尖刺区(站上周期掉血) / 维修站(玩家站上回血) */
+  const GlassWall  = OB_NS.GlassWall  || null;
+  const SpikeField = OB_NS.SpikeField || null;
+  const RepairPad  = OB_NS.RepairPad  || null;
 
   // ---------- 常量 ----------
   const SECTIONS = 3;
@@ -60,23 +64,24 @@
 
   /* 对称地图模板（基础 26×16，加载期统一放大 2 倍 → 52×32，从原点铺满世界；网格化均匀布局）
    * 符号：B砖 S钢 G草丛 W水 I冰 M泥 P/Q传送门（成对）
+   *      A玻璃砖(空心方阵、一枪即碎) X尖刺区(站上周期掉血) R维修站(玩家站上回血)
    * 三个据点中心（(13,8)/(6,12)/(20,4) 附近 3×3）保持空旷 */
   const _BASE_MAP = [
     '..........................',
-    '..SS.BBB..GG...II....SS...',
-    '..SS.B.B...G...I.I...SS...',
-    '.....B.B...GG..........SS.',
-    '.....BBB...II....MM.......',
-    '.GG....................GG.',
+    '..SS.BBB..GG...II..XXSS...',
+    '..SS.B.BAAAG...I.I.XXSS...',
+    '.....B.BA.AGG..........SS.',
+    '.....BBBAAAII..R.MM.......',
+    '.GG.............GGG....GG.',
     '.WWW...MM....GGG....SS..P.',
     '.W.W...MM..........SS.....',
     '.WWW.................SS...',
-    '......SS.........BB....GG.',
-    '..G....II..........BB.....',
+    '...XX.SS.......BBBB....GG.',
+    '..GXX..II...GG.BB..BB.....',
     '..GG...........MM....SS...',
     '.MMM.......Q....MM....SS..',
-    '.M.M....GG......BBB.......',
-    '.MMM....GG.......BBB......',
+    '.M.MR...GG......BBB..WW...',
+    '.MMM....GG.......BBB.WW...',
     '..........................',
   ];
   /* 地图扩大：基础模板 ×2 → 52×32（tile=64 → 3328×2048），布局密度不变、世界等比变大。
@@ -117,6 +122,9 @@
         else if (ch === 'W' && Water) obstacles.push(new Water({ x, y, w: tileSize, h: tileSize }));
         else if (ch === 'I' && Ice) obstacles.push(new Ice({ x, y, w: tileSize, h: tileSize }));
         else if (ch === 'M' && Mud) obstacles.push(new Mud({ x, y, w: tileSize, h: tileSize }));
+        else if (ch === 'A' && GlassWall) obstacles.push(new GlassWall({ x, y, w: tileSize, h: tileSize }));
+        else if (ch === 'X' && SpikeField) obstacles.push(new SpikeField({ x, y, w: tileSize, h: tileSize }));
+        else if (ch === 'R' && RepairPad) obstacles.push(new RepairPad({ x, y, w: tileSize, h: tileSize }));
         else if ((ch === 'P' || ch === 'Q') && Portal) {
           portalSeq++;
           const p = new Portal({ id: 'kh_portal_' + portalSeq, pairId: null, x, y, w: tileSize, h: tileSize });

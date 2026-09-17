@@ -35,6 +35,10 @@
   const Ice        = OB_NS.Ice    || null;
   const Mud        = OB_NS.Mud    || null;
   const Portal     = OB_NS.Portal || null;
+  /* 新地形 II：玻璃砖(一枪即碎) / 尖刺区(站上周期掉血) / 维修站(玩家站上回血) */
+  const GlassWall  = OB_NS.GlassWall  || null;
+  const SpikeField = OB_NS.SpikeField || null;
+  const RepairPad  = OB_NS.RepairPad  || null;
 
   // ---------- 常量 ----------
   /* MAP_W / MAP_H 在下方由放大后的模板推导（地图扩大后不再写死 1280） */
@@ -55,25 +59,27 @@
 
   /* 对称竞技场模板（基础 20×20，加载期统一放大 2 倍 → 40×40，tile=64 → 2560×2560，从原点铺满世界）
    * 点对称（180° 旋转对称）保证 P1/P2 公平；网格化均匀布局：5 段 × 4 列
-   * 符号：B砖 S钢 G草丛 W水 I冰 M泥 P/Q传送门（成对） */
+   * 符号：B砖 S钢 G草丛 W水 I冰 M泥 P/Q传送门（成对）
+   *      A玻璃砖(空心方阵、一枪即碎) X尖刺区(站上周期掉血) R维修站(玩家站上回血)
+   *      —— A/X/R/G/W 新增格同样按 180° 点对称成对摆放，保持双方公平 */
   const _BASE_MAP = [
     '....................',
     'SS..BB..GG....BB..SS',
     'SS..B.B.G....B.B..SS',
     '....B.B.G....B.B....',
     'WW..BBB.GGG..BBB..WW',
-    'WW................WW',
-    '....II..MM...II.....',
-    'GG..II..M.M..II...GG',
+    'WW.......R........WW',
+    '..XXII..MM...II.....',
+    'GGXXII..M.M..II...GG',
     /* 传送门不再写死在模板里（原 P/Q 固定在第 8/11 行，成行成片、位置可预测）。
      * 改为地图生成后从空地中随机取点成对散布，见 createMapFromTemplate 的 _scatterPortals。 */
-    '....................',
-    '....SS........SS....',
-    '....SS........SS....',
-    '....................',
-    'GG..II..M.M..II...GG',
-    '....II..MM...II.....',
-    'WW................WW',
+    'GG......AAAA..WWW...',
+    '....SS..A..A..SS....',
+    '....SS..A..A..SS....',
+    '...WWW..AAAA......GG',
+    'GG..II..M.M..II.XXGG',
+    '....II..MM...II.XX..',
+    'WW........R.......WW',
     'WW..BBB.GGG..BBB..WW',
     '....B.B.G....B.B....',
     '..SS.B.BG...B.B.SS..',
@@ -117,6 +123,9 @@
         else if (ch === 'W' && Water) obstacles.push(new Water({ x, y, w: tileSize, h: tileSize }));
         else if (ch === 'I' && Ice) obstacles.push(new Ice({ x, y, w: tileSize, h: tileSize }));
         else if (ch === 'M' && Mud) obstacles.push(new Mud({ x, y, w: tileSize, h: tileSize }));
+        else if (ch === 'A' && GlassWall) obstacles.push(new GlassWall({ x, y, w: tileSize, h: tileSize }));
+        else if (ch === 'X' && SpikeField) obstacles.push(new SpikeField({ x, y, w: tileSize, h: tileSize }));
+        else if (ch === 'R' && RepairPad) obstacles.push(new RepairPad({ x, y, w: tileSize, h: tileSize }));
         else emptyCells.push({ c: c, r: r, x: x, y: y });
       }
     }

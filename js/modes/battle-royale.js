@@ -30,6 +30,10 @@
   const Water = OB_NS.Water || null;
   const Ice   = OB_NS.Ice   || null;
   const Mud   = OB_NS.Mud   || null;
+  /* 新地形 II：玻璃砖(一枪即碎) / 尖刺区(站上周期掉血) / 维修站(玩家站上回血) */
+  const GlassWall  = OB_NS.GlassWall  || null;
+  const SpikeField = OB_NS.SpikeField || null;
+  const RepairPad  = OB_NS.RepairPad  || null;
 
   /* 大逃杀地图已扩大：2560 → 3072（48×48 格），布局与缩圈半径同步按比例放大 */
   const MAP_W = 3072, MAP_H = 3072, TILE = 64;
@@ -39,11 +43,13 @@
   const PUP_FIRST = 10;          // 首颗增益道具掉落延迟
   const PUP_INTERVAL = 18;       // 之后每 18s 一颗（技能随机掉落）
 
-  /* 在 (c,r) 起放一块 w×h 的地形（跳过已占用格） */
+  /* 在 (c,r) 起放一块 w×h 的地形（跳过已占用格）
+   * type='hollow'：只画外圈、内部留空（玻璃要塞等空心方阵用） */
   function paintPatch(obstacles, occupied, c, r, w, h, Ctor, type) {
     const cols = MAP_W / TILE, rows = MAP_H / TILE;
     if (!Ctor) return;
     for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) {
+      if (type === 'hollow' && dx > 0 && dx < w - 1 && dy > 0 && dy < h - 1) continue;
       const cc = c + dx, rr = r + dy;
       if (cc < 2 || cc >= cols - 2 || rr < 2 || rr >= rows - 2) continue;
       const key = cc + ',' + rr;
@@ -89,6 +95,16 @@
       }
     } catch (_) {}
 
+    /* 两座玻璃空心要塞：左右中部（脆皮掩体——挡得住第一眼，一枪即碎变开阔地）
+     * 位置避开 "ccr" 装饰 (8,8)、四角砖房要塞与商店终端；先于随机散布置入并登记 occupied */
+    const glassForts = [
+      [2, Math.floor(rows / 2) - 2],
+      [cols - 6, Math.floor(rows / 2) - 2]
+    ];
+    for (let p = 0; p < glassForts.length; p++) {
+      paintPatch(obstacles, occupied, glassForts[p][0], glassForts[p][1], 4, 4, GlassWall, 'hollow');
+    }
+
     // 随机散布砖墙 40 块（补充覆盖，中心稀疏）
     for (let i = 0; i < 40; i++) {
       const c = 3 + Math.floor(Math.random() * (cols - 6));
@@ -111,15 +127,23 @@
       { Ctor: Ice,   w: 3, h: 3 },
       { Ctor: Mud,   w: 2, h: 2 }
     ];
+    /* 新地形特供：玻璃空心阵 / 尖刺区 / 维修站（低频出现，丰富大逃杀博弈） */
+    const specials = [
+      { Ctor: GlassWall,  w: 3, h: 3, hollow: true },
+      { Ctor: SpikeField, w: 2, h: 2 },
+      { Ctor: RepairPad, w: 1, h: 1 }
+    ];
     for (let zr = 0; zr < ZONES; zr++) {
       for (let zc = 0; zc < ZONES; zc++) {
         /* 中心区（2,2）跳过：保留中心安全区 */
         if (zr === 2 && zc === 2) continue;
-        const pl = patchTypes[(zr * ZONES + zc) % patchTypes.length];
+        let pl = patchTypes[(zr * ZONES + zc) % patchTypes.length];
+        /* 约 16% 概率把常规补丁替换为 玻璃空心阵/尖刺区/维修站 */
+        if (Math.random() < 0.16) pl = specials[(Math.random() * specials.length) | 0];
         /* 区内随机偏移（留 2 格边距防贴墙） */
         const c = zc * zw + 2 + Math.floor(Math.random() * Math.max(1, zw - 3 - pl.w));
         const r = zr * zh + 2 + Math.floor(Math.random() * Math.max(1, zh - 3 - pl.h));
-        paintPatch(obstacles, occupied, c, r, pl.w, pl.h, pl.Ctor);
+        paintPatch(obstacles, occupied, c, r, pl.w, pl.h, pl.Ctor, pl.hollow ? 'hollow' : null);
       }
     }
     return { obstacles, w: MAP_W, h: MAP_H, tile: TILE };

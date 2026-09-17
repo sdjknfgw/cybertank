@@ -20,6 +20,8 @@
     let _styleInj = false;
     // p2Tank：本地双人时 P2 的车型（在坦克工坊里与 P1 用同一套卡片选择，仅 1v1 显示）
     let _state = { mode: null, difficulty: 'normal', tank: 'assault', duelOpponent: 'ai', p2Tank: 'assault' };
+    /* 指挥官用户名节点：登录态变化（auth:change）时免重渲染刷新文案 */
+    let _authNameEl = null;
 
     const MODES = [
         { id: 'royale',   emoji: '🔥', name: '大逃杀',     desc: '毒圈不断收缩\n淘汰所有对手\n唯一生存者', best: 'ct_best_royale' },
@@ -35,15 +37,6 @@
         { id: 'hard',   name: '困难' },
         { id: 'night',  name: '噩梦' }
     ];
-    /* ---------- 据点守护：按难度分档的计分排行 ---------- */
-    const KD_DIFFS = ['easy', 'normal', 'hard', 'night'];
-    function kdRecord(diff) {
-        try {
-            const S = global.CT_STORAGE;
-            if (S && typeof S.getRecord === 'function') return S.getRecord('kingdefend_' + diff) || {};
-        } catch (_) {}
-        return {};
-    }
     function fmtDur(sec) {
         sec = Math.max(0, Math.floor(Number(sec) || 0));
         const m = Math.floor(sec / 60), s = sec % 60;
@@ -227,7 +220,11 @@
             '*{scrollbar-width:none;-ms-overflow-style:none}' +
             '*::-webkit-scrollbar{width:0;height:0;display:none}' +
             '.ct-tank-dot{width:11px;height:11px;border-radius:50%;flex:0 0 auto;box-shadow:0 0 8px currentColor}' +
-            '.ct-color-chip{display:inline-flex;align-items:center;gap:6px;font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--text-mid)}';
+            '.ct-color-chip{display:inline-flex;align-items:center;gap:6px;font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--text-mid)}' +
+            /* 全球排行榜模式 Tab（青色霓虹胶囊，选中态高亮发光） */
+            '.ct-lb-tab{padding:6px 14px;border-radius:999px;border:1px solid rgba(0,229,255,.3);font-family:"Share Tech Mono",monospace;font-size:13px;cursor:pointer;background:rgba(12,18,40,.5);color:var(--text-mid);transition:all .18s ease}' +
+            '.ct-lb-tab:hover{border-color:var(--neon-cyan);color:var(--text-hi)}' +
+            '.ct-lb-tab.active{border-color:var(--neon-cyan);background:rgba(0,229,255,.12);color:var(--neon-cyan);text-shadow:0 0 8px rgba(0,229,255,.7);box-shadow:0 0 10px rgba(0,229,255,.35)}';
         document.head.appendChild(s);
     }
 
@@ -340,15 +337,13 @@
         logo.appendChild(h('div', 'ct-logo-sub', '—  NEON BATTLEGROUND  v1.0  —'));
         center.appendChild(logo);
 
-        // 4 按钮（坦克工坊入口已移除；坦克/皮肤选择保留在「开始游戏」流程内）
+        // 按钮列（账号入口移至左下角图标；新手训练/存档管理已删除）
         const btns = [
-            { icon: '▶', text: '开始游戏',   act: () => MENU.renderModeSelect() },
+            { icon: '▶', text: '开始游戏',   act: () => MENU.requireLogin(() => MENU.renderModeSelect(), '开始游戏前请先登录账号') },
             { icon: '⚙', text: '游戏设置',   act: () => MODAL && MODAL.showSettings() },
             { icon: '🏆', text: '排行榜',     act: () => showLeaderboard() },
             { icon: '📖', text: '操作说明',   act: () => MODAL && MODAL.showControlsHelp() },
-            { icon: '🧱', text: '方块图鉴',   act: () => MODAL && MODAL.showBlockGuide && MODAL.showBlockGuide() },
-            { icon: '🎯', text: '新手训练',   act: () => openTutorial() },
-            { icon: '💾', text: '存档管理',   act: () => openSaveManager() }
+            { icon: '🧱', text: '方块图鉴',   act: () => MODAL && MODAL.showBlockGuide && MODAL.showBlockGuide() }
         ];
         const btnCol = h('div', 'flex flex-col gap-4 items-center');
         btns.forEach((b) => {
@@ -360,11 +355,17 @@
         center.appendChild(btnCol);
         autofit(fb.inner, fb.box, 1.05);
 
-        // 左下角：指挥官信息
-        const leftInfo = h('div', 'absolute bottom-6 left-6 z-20 flex items-center gap-4 font-tech');
+        // 左下角：账号入口（仅图标，点击打开账号/登录）+ 指挥官名（随登录账号自动更换）
+        const leftInfo = h('div', 'absolute bottom-6 left-6 z-20 flex items-center gap-3 font-tech');
+        const accBtn = h('button', 'w-12 h-12 rounded-full border border-neon-cyan/50 bg-neon-cyan/10 flex items-center justify-center text-neon-cyan text-2xl hover:bg-neon-cyan/20 transition-all shadow-[0_0_12px_rgba(0,229,255,.35)]');
+        accBtn.innerHTML = '👤';
+        accBtn.title = '账号 / 登录';
+        accBtn.addEventListener('click', () => { global.CT_UI_AUTH && global.CT_UI_AUTH.showAccount && global.CT_UI_AUTH.showAccount(); });
+        leftInfo.appendChild(accBtn);
         const commander = h('div', 'flex flex-col');
         commander.appendChild(h('div', 'text-text-lo text-xs tracking-widest', 'COMMANDER'));
-        commander.appendChild(h('div', 'text-text-hi font-bold text-lg', STORE.get('player_name', '玩家001')));
+        _authNameEl = h('div', 'text-text-hi font-bold text-lg', MENU.displayName());
+        commander.appendChild(_authNameEl);
         leftInfo.appendChild(commander);
         leftInfo.appendChild(h('div', 'text-text-lo text-xs ml-2 font-mono', 'v1.0'));
         wrap.appendChild(leftInfo);
@@ -420,58 +421,187 @@
         BUS && BUS.emit && BUS.emit('ui:mainMenuShown');
     };
 
-    /* ---------- 排行榜 ---------- */
+    /* ---------- 账号态 ---------- */
+    /* 指挥官显示名：登录 → 账号用户名；未登录 → 本地玩家名（玩家001） */
+    MENU.displayName = function () {
+        try {
+            const BE = global.CT_BACKEND;
+            if (BE && typeof BE.isLoggedIn === 'function' && BE.isLoggedIn()) {
+                const u = (typeof BE.getUser === 'function' && BE.getUser()) || null;
+                if (u && u.username) return u.username;
+            }
+        } catch (_) {}
+        return STORE.get('player_name', '玩家001');
+    };
+    /* 登录态变化（auth:change）时刷新主菜单：名字节点在屏则就地更新；
+     * 不在屏则忽略，下次 renderMainMenu 会读取最新登录态。 */
+    MENU.refreshAuthBtn = function () {
+        if (_authNameEl && _authNameEl.isConnected) {
+            _authNameEl.textContent = MENU.displayName();
+        }
+    };
+
+    /* ---------- 登录门控：必须登录才能开始游戏 ----------
+     * 已登录 → 直接执行 next；未登录 → toast 提示 + 弹出账号弹窗，
+     * 登录/注册成功（auth:change 带 user）后自动继续被拦截的动作。 */
+    let _pendingAfterLogin = null;
+    if (BUS && typeof BUS.on === 'function') {
+        BUS.on('auth:change', (payload) => {
+            if (payload && payload.user && typeof _pendingAfterLogin === 'function') {
+                const fn = _pendingAfterLogin;
+                _pendingAfterLogin = null;
+                try { fn(); } catch (_) {}
+            }
+        });
+    }
+    MENU.requireLogin = function (next, reason) {
+        const BE = global.CT_BACKEND;
+        if (BE && typeof BE.isLoggedIn === 'function' && BE.isLoggedIn()) { next(); return; }
+        _pendingAfterLogin = next;
+        _toastSafe(reason || '请先登录账号，登录后自动继续');
+        const AU = global.CT_UI_AUTH;
+        if (AU && typeof AU.showAccount === 'function') AU.showAccount();
+    };
+
+    /* ---------- 排行榜：按模式 Tab 的全球排行（离线降级为本地最佳） ---------- */
+    /* 模式 id → 后端排行榜 mode 白名单 */
+    const LB_API_MODE = {
+        royale: 'battle-royale', kinghill: 'king-hill', horde: 'horde',
+        duel: 'duel', kingdefend: 'kingdefend', online: 'online'
+    };
+    /* created_at（ISO）→ MM-DD */
+    function lbFmtMD(iso) {
+        try {
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return '—';
+            const p = (n) => (n < 10 ? '0' + n : '' + n);
+            return p(d.getMonth() + 1) + '-' + p(d.getDate());
+        } catch (_) { return '—'; }
+    }
+
     function showLeaderboard() {
         const body = h('div');
-        const tbl = h('div', 'border border-neon-cyan/30 rounded-lg overflow-hidden');
-        const th = h('div', 'flex px-4 py-3 bg-neon-cyan/15 font-tech text-glow-cyan border-b border-neon-cyan/30');
-        th.appendChild(h('span', 'w-20', '排名'));
-        th.appendChild(h('span', 'flex-1', '模式'));
-        th.appendChild(h('span', 'flex-1 text-right font-mono text-glow-gold', '最佳纪录'));
-        tbl.appendChild(th);
-        MODES.forEach((m, i) => {
-            const best = STORE.get(m.best, 0);
-            const tr = h('div', 'flex px-4 py-3 ' + (i % 2 ? 'bg-neon-cyan/5' : '') + ' items-center');
-            const rank = ['🥇', '🥈', '🥉', '4', '5'][i];
-            tr.appendChild(h('span', 'w-20 font-mono text-lg', rank));
-            tr.appendChild(h('span', 'flex-1 flex items-center gap-2', '<span class="text-2xl">' + m.emoji + '</span>' + m.name));
-            tr.appendChild(h('span', 'flex-1 text-right font-mono text-glow-gold text-lg', best > 0 ? best.toLocaleString() : '— — —'));
-            tbl.appendChild(tr);
-        });
-        body.appendChild(tbl);
+        /* 顶部一排模式 Tab（复用 MODES 的 emoji + name） */
+        const tabRow = h('div', 'flex flex-wrap gap-2 mb-4');
+        const content = h('div', 'min-h-[140px]');
+        body.appendChild(tabRow);
+        body.appendChild(content);
 
-        /* 据点守护 · 分难度计分排行（各难度独立记录，互不覆盖） */
-        const kdWrap = h('div', 'mt-5');
-        kdWrap.appendChild(h('div', 'font-tech text-glow-cyan text-sm tracking-widest mb-2', '🛡 据点守护 · 难度排行'));
-        const kdTbl = h('div', 'border border-neon-cyan/25 rounded-lg overflow-hidden');
-        const kdTh = h('div', 'flex px-4 py-2 bg-neon-cyan/10 font-tech text-[11px] text-text-lo border-b border-neon-cyan/25');
-        kdTh.appendChild(h('span', 'w-16', '难度'));
-        kdTh.appendChild(h('span', 'flex-1 text-right', '最高分'));
-        kdTh.appendChild(h('span', 'flex-1 text-right', '最佳波次'));
-        kdTh.appendChild(h('span', 'flex-1 text-right', '最长坚守'));
-        kdTh.appendChild(h('span', 'w-14 text-right', '评级'));
-        kdTbl.appendChild(kdTh);
-        KD_DIFFS.forEach((id, i) => {
-            const d = DIFFS.filter((x) => x.id === id)[0] || { name: id };
-            const r = kdRecord(id);
-            const tr = h('div', 'flex px-4 py-2 ' + (i % 2 ? 'bg-neon-cyan/5' : '') + ' items-center text-sm');
-            tr.appendChild(h('span', 'w-16', d.name));
-            tr.appendChild(h('span', 'flex-1 text-right font-mono text-glow-gold', (r.highScore || 0) > 0 ? (r.highScore || 0).toLocaleString() : '—'));
-            tr.appendChild(h('span', 'flex-1 text-right font-mono', (r.bestWave || 0) > 0 ? String(r.bestWave || 0) : '—'));
-            tr.appendChild(h('span', 'flex-1 text-right font-mono', (r.bestTime || 0) > 0 ? fmtDur(r.bestTime) : '—'));
-            tr.appendChild(h('span', 'w-14 text-right font-mono text-glow-cyan', r.bestRating || '—'));
-            kdTbl.appendChild(tr);
+        let seq = 0;   /* 竞态防护：modal 关闭 / 切换 Tab 后丢弃过期请求结果 */
+
+        function selectTab(id) {
+            tabRow.querySelectorAll('.ct-lb-tab').forEach((t) => {
+                t.classList.toggle('active', t.dataset.mode === id);
+            });
+            renderTab(id);
+        }
+        MODES.forEach((m) => {
+            const tab = h('button', 'ct-lb-tab');
+            tab.textContent = m.emoji + ' ' + m.name;
+            tab.dataset.mode = m.id;
+            tab.addEventListener('click', () => selectTab(m.id));
+            tabRow.appendChild(tab);
         });
-        kdWrap.appendChild(kdTbl);
-        body.appendChild(kdWrap);
+
+        /* 拉取指定模式榜单：先渲染加载中，fetch 完成后替换 */
+        function renderTab(id) {
+            const mySeq = ++seq;
+            content.innerHTML = '';
+            content.appendChild(h('div', 'py-10 text-center text-text-lo text-sm font-mono anim-blink', '⏳ LOADING…'));
+            const BE = global.CT_BACKEND;
+            if (!BE || typeof BE.isLoggedIn !== 'function' || !BE.isLoggedIn()) {
+                renderLocalFallback();
+                return;
+            }
+            BE.leaderboard(LB_API_MODE[id] || id, 50).then((data) => {
+                if (mySeq !== seq || !content.isConnected) return;   /* 过期结果（弹窗已关 / 已切 Tab） */
+                content.innerHTML = '';
+                if (data && Array.isArray(data.rows) && data.rows.length) {
+                    renderGlobalTable(data.rows);
+                } else {
+                    /* 已登录且在线，仅该模式暂无记录（非离线） */
+                    renderLocalFallback(true);
+                }
+            }).catch(() => { if (mySeq === seq) renderLocalFallback(); });
+        }
+
+        /* 离线 / 未登录 / 拉取失败：原「本地最佳」内容作为降级视图 + 离线提示条 */
+        function renderLocalFallback(onlineEmpty) {
+            content.innerHTML = '';
+            /* onlineEmpty=true：已登录且在线，仅当前模式暂无上榜记录（并非离线） */
+            content.appendChild(h('div',
+                'mb-4 px-3 py-2 rounded-lg text-xs ' + (onlineEmpty
+                    ? 'bg-neon-gold/5 border border-neon-gold/30 text-neon-gold'
+                    : 'bg-black/30 border border-neon-cyan/20 text-text-lo'),
+                onlineEmpty
+                    ? '📡 榜单虚位以待 — 该模式还没有人上榜，快去创造第一个纪录！'
+                    : '⚠ 离线模式：登录账号并连接服务器后可查看全球排行'));
+            const tbl = h('div', 'border border-neon-cyan/30 rounded-lg overflow-hidden');
+            const th = h('div', 'flex px-4 py-3 bg-neon-cyan/15 font-tech text-glow-cyan border-b border-neon-cyan/30');
+            th.appendChild(h('span', 'w-20', '排名'));
+            th.appendChild(h('span', 'flex-1', '模式'));
+            th.appendChild(h('span', 'flex-1 text-right font-mono text-glow-gold', '最佳纪录'));
+            tbl.appendChild(th);
+            MODES.forEach((m, i) => {
+                const best = STORE.get(m.best, 0);
+                const tr = h('div', 'flex px-4 py-3 ' + (i % 2 ? 'bg-neon-cyan/5' : '') + ' items-center');
+                const rank = ['🥇', '🥈', '🥉', '4', '5'][i];
+                tr.appendChild(h('span', 'w-20 font-mono text-lg', rank));
+                tr.appendChild(h('span', 'flex-1 flex items-center gap-2', '<span class="text-2xl">' + m.emoji + '</span>' + m.name));
+                tr.appendChild(h('span', 'flex-1 text-right font-mono text-glow-gold text-lg', best > 0 ? best.toLocaleString() : '— — —'));
+                tbl.appendChild(tr);
+            });
+            content.appendChild(tbl);
+        }
+
+        /* 全球榜单：排名 / 玩家 / 分数 / 波次 / 时长 / 日期 */
+        function renderGlobalTable(rows) {
+            const BE = global.CT_BACKEND;
+            let me = '';
+            try {
+                if (BE && typeof BE.getUser === 'function') {
+                    const u = BE.getUser();
+                    if (u && u.username) me = u.username;
+                }
+            } catch (_) {}
+            const tbl = h('div', 'border border-neon-cyan/30 rounded-lg overflow-hidden');
+            const th = h('div', 'flex px-4 py-2.5 bg-neon-cyan/15 font-tech text-glow-cyan text-xs border-b border-neon-cyan/30');
+            th.appendChild(h('span', 'w-14 text-center', '排名'));
+            th.appendChild(h('span', 'flex-1', '玩家'));
+            th.appendChild(h('span', 'w-24 text-right', '分数'));
+            th.appendChild(h('span', 'w-14 text-right', '波次'));
+            th.appendChild(h('span', 'w-16 text-right', '时长'));
+            th.appendChild(h('span', 'w-14 text-right', '日期'));
+            tbl.appendChild(th);
+            rows.forEach((r, i) => {
+                const isMe = !!(me && r.username === me);
+                const tr = h('div', 'flex px-4 py-2.5 items-center text-sm ' + (isMe ? 'bg-neon-gold/10' : (i % 2 ? 'bg-neon-cyan/5' : '')));
+                const medal = ['🥇', '🥈', '🥉'][(r.rank || (i + 1)) - 1] || String(r.rank || (i + 1));
+                tr.appendChild(h('span', 'w-14 text-center font-mono text-base', medal));
+                const nm = h('span', 'flex-1 flex items-center gap-1.5 overflow-hidden');
+                nm.appendChild(h('span', 'truncate' + (isMe ? ' text-neon-gold font-bold' : ' text-text-hi'), r.username || '???'));
+                if (r.victory) nm.appendChild(h('span', 'text-xs', '🏆'));
+                tr.appendChild(nm);
+                tr.appendChild(h('span', 'w-24 text-right font-mono text-glow-gold', (Number(r.score) || 0).toLocaleString()));
+                tr.appendChild(h('span', 'w-14 text-right font-mono', (Number(r.wave) || 0) > 0 ? String(r.wave) : '—'));
+                tr.appendChild(h('span', 'w-16 text-right font-mono', (Number(r.duration) || 0) > 0 ? fmtDur(r.duration) : '—'));
+                tr.appendChild(h('span', 'w-14 text-right font-mono text-text-lo', lbFmtMD(r.created_at)));
+                tbl.appendChild(tr);
+            });
+            content.appendChild(tbl);
+        }
 
         MODAL.show({
             title: '🏆 全球排行榜',
             body: body,
             className: 'cyan',
-            size: 'md',
+            size: 'lg',
             buttons: [{ label: '关闭', level: 'primary', onClick: (_, c) => c() }]
         });
+
+        /* 默认 Tab：跟随玩家上次选择的模式 */
+        const initial = MODES.some((m) => m.id === _state.mode) ? _state.mode : 'horde';
+        selectTab(initial);
     }
 
     /* ---------- 画质读取 / 轻量 toast ---------- */
@@ -487,90 +617,6 @@
     }
     function _toastSafe(m) {
         try { if (global.CT_TOAST) global.CT_TOAST(m, 'info'); } catch (_) {}
-    }
-
-    /* ---------- 新手训练 / 操作教学（D-02） ---------- */
-    function openTutorial() {
-        const body = h('div', 'text-sm text-text-mid leading-relaxed');
-        body.innerHTML =
-            '<div class="mb-3 text-text-hi font-tech tracking-widest">🎯 操作教学</div>' +
-            '<div class="grid grid-cols-2 gap-x-6 gap-y-2">' +
-            '<div>移动（P1）：<b class="text-neon-cyan">W A S D</b></div>' +
-            '<div>开火（P1）：<b class="text-neon-cyan">空格 / J / 鼠标左键</b></div>' +
-            '<div>技能（P1）：<b class="text-neon-cyan">E / K</b></div>' +
-            '<div>使用道具：<b class="text-neon-cyan">1 ~ 5</b></div>' +
-            '<div>交互 / 商店：<b class="text-neon-cyan">F</b></div>' +
-            '<div>地图：<b class="text-neon-cyan">M</b></div>' +
-            '<div>暂停：<b class="text-neon-cyan">Esc</b></div>' +
-            '<div>瞄准：<b class="text-neon-cyan">移动鼠标</b></div>' +
-            '</div>' +
-            '<div class="mt-4 p-3 rounded-lg bg-neon-gold/5 border border-neon-gold/25 text-xs leading-relaxed">' +
-            '👥 <b>本地双人（仅 1v1）</b>：P2 用右侧键盘独立操控——' +
-            '移动 <b class="text-neon-gold">↑ ↓ ← →</b>、开火 <b class="text-neon-gold">Enter</b>、技能 <b class="text-neon-gold">右 Shift</b>。' +
-            'P1 与 P2 可在工坊分别挑选车型（P2 默认跟随 P1）。</div>' +
-            '<div class="mt-2 p-3 rounded-lg bg-neon-cyan/5 border border-neon-cyan/20 text-xs leading-relaxed">' +
-            '💡 提示：大逃杀注意毒圈收缩、尽早进圈；据点争夺站上据点 3 秒起开始累计积分；' +
-            '移动端会自动启用摇杆与触控开火，并在瞄准时提供辅助磁吸。</div>';
-        MODAL.show({
-            title: '🎯 新手训练',
-            body: body,
-            className: 'cyan',
-            size: 'md',
-            buttons: [{ label: '我知道了', level: 'primary', onClick: (_, c) => c() }]
-        });
-    }
-
-    /* ---------- 存档管理：导出 / 导入 / 云端（D-05） ---------- */
-    function openSaveManager() {
-        const body = h('div', 'flex flex-col gap-3 text-sm');
-        const ta = h('textarea', 'w-full h-32 rounded-lg bg-black/40 border border-neon-cyan/30 p-2 text-xs font-mono text-neon-cyan');
-        ta.placeholder = '点击「导出存档」生成文本，或粘贴他人存档后点击「导入存档」';
-        const status = h('div', 'text-xs text-text-lo', '本地存档保存在浏览器 localStorage。');
-
-        const exportBtn = h('button', 'ct-neon-btn btn-primary !h-10', '⬇ 导出存档');
-        exportBtn.addEventListener('click', () => {
-            try {
-                const ST = global.CT_STORAGE;
-                const txt = (ST && typeof ST.exportSave === 'function') ? ST.exportSave() : '';
-                ta.value = txt;
-                if (txt) { ta.select(); }
-                status.textContent = txt ? '已生成存档文本，已自动选中，可复制保存。' : '导出失败：未找到存档接口。';
-                if (txt) _toastSafe('存档已导出');
-            } catch (e) { status.textContent = '导出失败：' + (e && e.message ? e.message : e); }
-        });
-        const importBtn = h('button', 'ct-neon-btn btn-ghost !h-10', '⬆ 导入存档');
-        importBtn.addEventListener('click', () => {
-            try {
-                const ST = global.CT_STORAGE;
-                const txt = ta.value.trim();
-                if (!txt) { status.textContent = '请先粘贴存档文本。'; return; }
-                const ok = (ST && typeof ST.importSave === 'function') ? ST.importSave(txt) : false;
-                status.textContent = ok ? '导入成功，进度已恢复！' : '导入失败：文本格式不正确。';
-                if (ok) _toastSafe('存档已导入');
-            } catch (e) { status.textContent = '导入失败：' + (e && e.message ? e.message : e); }
-        });
-        const cloudBtn = h('button', 'ct-neon-btn btn-ghost !h-10', '☁ 云端同步（需登录）');
-        cloudBtn.addEventListener('click', () => {
-            try {
-                const ST = global.CT_STORAGE;
-                if (ST && typeof ST.syncToCloud === 'function') ST.syncToCloud();
-                else status.textContent = '云端同步需要登录账号，当前为本地存档（云端功能预留）。';
-            } catch (_) {}
-        });
-
-        body.appendChild(status);
-        const row = h('div', 'flex gap-2 flex-wrap');
-        row.appendChild(exportBtn); row.appendChild(importBtn); row.appendChild(cloudBtn);
-        body.appendChild(row);
-        body.appendChild(ta);
-
-        MODAL.show({
-            title: '💾 存档管理',
-            body: body,
-            className: 'cyan',
-            size: 'md',
-            buttons: [{ label: '关闭', level: 'primary', onClick: (_, c) => c() }]
-        });
     }
 
     /* ---------- 模式选择 ---------- */
@@ -718,41 +764,89 @@
         cv.style.maxWidth = '100%';
         preview.appendChild(cv);
         grid.appendChild(preview);
-        let angle = 0;
+        /* 坦克预览：缓慢匀速自转（8°/s，dt 基准，修复原每帧 4.8° 的疯转）+ 悬浮 + 能量平台 + 扫描环 */
+        let angle = 0, prevT = 0, bobT = 0;
         const ctx = cv.getContext('2d');
         let tankRaf = null;
-        function drawTankFrame() {
+        function drawTankFrame(ts) {
+            if (!cv.isConnected) return;   // 离开工坊自动停 rAF（防泄漏）
+            const dt = Math.min(0.05, ((ts || performance.now()) - (prevT || ts || 0)) / 1000);
+            prevT = ts || performance.now();
+            angle += dt * 8 * Math.PI / 180;   // 8°/s 匀速缓转
+            bobT += dt;
             const w = cv.width, h = cv.height;
             ctx.clearRect(0, 0, w, h);
-            // halo
-            ctx.save();
             const _tc = tankColor();
-            const grad = ctx.createRadialGradient(w / 2, h / 2, 20, w / 2, h / 2, 180);
+            const cx = w / 2, cy = h / 2 + 6, s = 1.4;
+            const bob = Math.sin(bobT * 1.6) * 5;   // 悬浮幅度
+
+            // 背景光晕
+            ctx.save();
+            const grad = ctx.createRadialGradient(cx, cy, 20, cx, cy, 190);
             grad.addColorStop(0, _tc + '59');
             grad.addColorStop(1, _tc + '00');
             ctx.fillStyle = grad;
             ctx.fillRect(0, 0, w, h);
             ctx.restore();
-            // tank body (伪 3D)
-            const cx = w / 2, cy = h / 2, s = 1.4;
+
+            // 地面：椭圆能量平台 + 同心衰减环
+            ctx.save();
+            ctx.translate(cx, cy + 52);
+            ctx.strokeStyle = _tc + '55'; ctx.lineWidth = 1.5;
+            ctx.shadowColor = _tc; ctx.shadowBlur = 10;
+            for (let i = 1; i <= 3; i++) {
+                ctx.globalAlpha = 0.85 - i * 0.18;
+                ctx.beginPath();
+                ctx.ellipse(0, 0, 36 * i, 9.5 * i, 0, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+            ctx.globalAlpha = 1;
+            ctx.beginPath(); ctx.ellipse(0, 0, 118, 30, 0, 0, Math.PI * 2);
+            ctx.fillStyle = _tc + '14'; ctx.fill();
+            ctx.restore();
+
+            // 坦克投影（随悬浮高度微缩放）
+            ctx.save();
+            ctx.translate(cx, cy + 54);
+            const sh = 1 - bob * 0.02;
+            ctx.fillStyle = 'rgba(0,0,0,0.45)';
+            ctx.beginPath(); ctx.ellipse(0, 0, 44 * sh, 13 * sh, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.restore();
+
+            // 旋转扫描环（反向缓转，虚线）
             ctx.save();
             ctx.translate(cx, cy);
+            ctx.rotate(-angle * 1.6);
+            ctx.strokeStyle = _tc + '88'; ctx.lineWidth = 2;
+            ctx.setLineDash([26, 20]);
+            ctx.beginPath(); ctx.arc(0, 0, 86, 0, Math.PI * 2); ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.restore();
+
+            // 坦克本体（伪 3D + 悬浮 + 渐变车身）
+            ctx.save();
+            ctx.translate(cx, cy + bob);
             ctx.rotate(angle);
             ctx.scale(s, s);
-            const bodyColor = tankColor();
-            // 阴影
-            ctx.fillStyle = 'rgba(0,0,0,0.5)';
-            ctx.beginPath(); ctx.ellipse(4, 8, 38, 14, 0, 0, Math.PI * 2); ctx.fill();
+            const bodyColor = _tc;
+            ctx.fillStyle = 'rgba(0,0,0,0.35)';
+            ctx.beginPath(); ctx.ellipse(2, 5, 34, 12, 0, 0, Math.PI * 2); ctx.fill();
             // 履带
             ctx.fillStyle = '#222'; ctx.strokeStyle = bodyColor; ctx.lineWidth = 2;
-            ctx.shadowBlur = 14; ctx.shadowColor = bodyColor;
+            ctx.shadowBlur = 16; ctx.shadowColor = bodyColor;
             ctx.fillRect(-36, -22, 72, 10); ctx.strokeRect(-36, -22, 72, 10);
             ctx.fillRect(-36, 12, 72, 10);  ctx.strokeRect(-36, 12, 72, 10);
-            // 车身
-            ctx.fillStyle = bodyColor + 'cc';
+            // 车身（渐变 + 顶部高光）
+            const bodyGrad = ctx.createLinearGradient(-28, -16, 28, 16);
+            bodyGrad.addColorStop(0, bodyColor);
+            bodyGrad.addColorStop(0.5, bodyColor + 'dd');
+            bodyGrad.addColorStop(1, bodyColor + '99');
+            ctx.fillStyle = bodyGrad;
             ctx.fillRect(-28, -16, 56, 32);
             ctx.strokeRect(-28, -16, 56, 32);
             ctx.shadowBlur = 0;
+            ctx.fillStyle = 'rgba(255,255,255,0.18)';
+            ctx.fillRect(-26, -14, 52, 8);
             // 炮塔
             ctx.fillStyle = bodyColor;
             ctx.beginPath(); ctx.arc(0, 0, 14, 0, Math.PI * 2); ctx.fill();
@@ -763,10 +857,10 @@
             ctx.strokeStyle = bodyColor; ctx.lineWidth = 1.5;
             ctx.strokeRect(8, -3, 28, 6);
             ctx.restore();
-            angle += 0.08 * Math.PI / 180 * 60; // 8°/s @ 60fps
+
             tankRaf = requestAnimationFrame(drawTankFrame);
         }
-        drawTankFrame();
+        drawTankFrame(performance.now());
 
         // 右上：坦克选择卡片（带属性条，清晰直观）
         const tankPanel = h('div', 'neon-panel col-span-7 row-span-7 relative p-5 flex flex-col');
@@ -831,7 +925,7 @@
         back.addEventListener('click', () => { cancelAnimationFrame(tankRaf); MENU.renderModeSelect(); });
         bottomCard.appendChild(back);
         const deploy = h('button', 'ct-neon-btn btn-primary !px-12 !h-16 !text-2xl font-tech tracking-wider shadow-[0_0_24px_rgba(0,229,255,.6)]', '⚔ 出 战');
-        deploy.addEventListener('click', () => {
+        const doDeploy = () => {
             cancelAnimationFrame(tankRaf);
             if (!_state.mode) { _state.mode = 'horde'; }
             // 联机模式：进入联机大厅（创建/加入/匹配），不走本地 HUD.startGame
@@ -859,7 +953,8 @@
                 if (hud) hud.classList.remove('hidden');
                 BUS && BUS.emit && BUS.emit('ui:gameStarting', { mode: _state.mode, tank: _state.tank, skin: tankColor(), difficulty: _state.difficulty });
             }
-        });
+        };
+        deploy.addEventListener('click', () => MENU.requireLogin(doDeploy, '出战前请先登录账号'));
         bottomCard.appendChild(deploy);
         grid.appendChild(bottomCard);
     };
@@ -1013,7 +1108,7 @@
         const confirmBtn = h('button', 'ct-neon-btn btn-primary !px-12 !h-16 !text-2xl font-tech tracking-wider',
             isP1 ? '✓ 玩家1 确认，交给玩家2 →' : '⚔ 开始 1v1 对战');
         confirmBtn.style.boxShadow = '0 0 24px ' + accent + '99';
-        confirmBtn.addEventListener('click', () => {
+        const doConfirm = () => {
             if (isP1) {
                 MENU._renderDuelTankPick('p2');
             } else {
@@ -1034,7 +1129,8 @@
                     BUS && BUS.emit && BUS.emit('ui:gameStarting', { mode: _state.mode, tank: _state.tank, skin: tankColor(), difficulty: _state.difficulty });
                 }
             }
-        });
+        };
+        confirmBtn.addEventListener('click', () => MENU.requireLogin(doConfirm, '开战前请先登录账号'));
         bottomCard.appendChild(confirmBtn);
         grid.appendChild(bottomCard);
 

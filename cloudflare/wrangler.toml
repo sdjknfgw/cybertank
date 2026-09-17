@@ -1,0 +1,8 @@
+name = "cybertank"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "cybertank"
+database_id = "a5c1f9f0-fbca-4849-9ff7-10f7c4fffec4"

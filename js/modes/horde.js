@@ -30,6 +30,10 @@
   const Ice       = OB_NS.Ice    || null;
   const Mud       = OB_NS.Mud    || null;
   const Portal    = OB_NS.Portal || null;
+  /* 新地形 II：玻璃砖(一枪即碎) / 尖刺区(站上周期掉血) / 维修站(玩家站上回血) */
+  const GlassWall = OB_NS.GlassWall  || null;
+  const SpikeField= OB_NS.SpikeField || null;
+  const RepairPad = OB_NS.RepairPad  || null;
 
   const MAP_W = RENDER.world && RENDER.world.w ? RENDER.world.w : 2400;
   const MAP_H = RENDER.world && RENDER.world.h ? RENDER.world.h : 1600;
@@ -38,28 +42,29 @@
   const PUP_INTERVAL = 15;       // 之后每 15s 一颗（技能随机掉落）
 
   /* 地图模板（基础 32×21，加载期统一放大 2 倍 → 64×42；网格化均匀布局：4 横带 × 4 竖区，每区必有结构，带间走道）
-   * 符号：B=砖 S=钢 G=草丛(隐身) W=水(挡车不挡弹) I=冰(打滑) M=泥(减速) P/Q=传送门(成对) */
+   * 符号：B=砖 S=钢 G=草丛(隐身) W=水(挡车不挡弹) I=冰(打滑) M=泥(减速) P/Q=传送门(成对)
+   *      A=玻璃砖(空心方阵、一枪即碎) X=尖刺区(站上周期掉血) R=维修站(玩家站上回血) */
   const _BASE_MAP = [
     '................................',
     '..SS....BBBB.......BBBB.....SS..',
     '..SS....B..B.......B..B.....SS..',
-    '........B..B.......B..B.........',
+    '........B..B.......B..B...R.....',
     '........BBBB.......BBBB.........',
     '................................',
-    '.WWW.....MMM.......IIII.....MMM.',
-    '.W.......M.M.......I..I......M.M',
-    '.WWW.....MMM.......IIII......MMM',
-    '..GG........................GG..',
-    '................................',
-    '..GG....SSSS.........P......GG..',
-    '..GG....S..S................GG..',
-    '........S..S.......IIII.........',
+    '.WWW.....MMM.......IIIIXXX..MMM.',
+    '.W.......M.M.......I..IXXX...M.M',
+    '.WWW.BB..MMM.......IIIIXXX...MMM',
+    '..GG.BB.......GGG...........GG..',
+    '................R......AAAA.....',
+    '..GG....SSSS.........P.A..A.GG..',
+    '..GG....S..S..SS.......A..A.GG..',
+    '........S..S..SS...IIIIAAAA.....',
     '..BB....SSSS.......IIIQ.....BB..',
     '................................',
-    '.MMM....BBBB.......GGGG.....BBB.',
-    '.M.M....B..B.......G..G......B.B',
-    '.M.M....B..B.......G..G......B.B',
-    '........BBBB.......GGGG.....BBB.',
+    '.MMM....BBBB.......GGGG.XX..BBB.',
+    '.M.M....B..B.......G..G.XX...B.B',
+    '.M.M....B..B.......G..G.GGG..B.B',
+    '........BBBB.......GGGG.GGG.BBB.',
     '................................',
   ];
   /* 地图扩大：基础模板 ×2 → 64×42（tile=64 → 4096×2688），布局密度不变、世界等比变大。
@@ -96,6 +101,9 @@
         else if (ch === 'W' && Water) obstacles.push(new Water({ x, y, w: tileSize, h: tileSize }));
         else if (ch === 'I' && Ice) obstacles.push(new Ice({ x, y, w: tileSize, h: tileSize }));
         else if (ch === 'M' && Mud) obstacles.push(new Mud({ x, y, w: tileSize, h: tileSize }));
+        else if (ch === 'A' && GlassWall) obstacles.push(new GlassWall({ x, y, w: tileSize, h: tileSize }));
+        else if (ch === 'X' && SpikeField) obstacles.push(new SpikeField({ x, y, w: tileSize, h: tileSize }));
+        else if (ch === 'R' && RepairPad) obstacles.push(new RepairPad({ x, y, w: tileSize, h: tileSize }));
         else if ((ch === 'P' || ch === 'Q') && Portal) {
           portalSeq++;
           if (ch === 'P') {
@@ -120,7 +128,7 @@
       OB.scatterFill(obstacles, {
         tile: tileSize, cols: cols, rows: rows,
         density: 0.15, skipBorder: true, skipBottomRows: 2,
-        ctor: { WallBrick: WallBrick, WallSteel: WallSteel, Bush: Bush, Water: Water, Ice: Ice, Mud: Mud },
+        ctor: { WallBrick: WallBrick, WallSteel: WallSteel, Bush: Bush, Water: Water, Ice: Ice, Mud: Mud, GlassWall: GlassWall, SpikeField: SpikeField, RepairPad: RepairPad },
         rng: Math.random,
         // 保护底部中央的水晶基地（约 cols 12~17 × rows 15~18），避免方块压住基地
         skipRects: [{ c0: Math.floor(cols / 2) - 3, c1: Math.floor(cols / 2) + 2, r0: rows - 5, r1: rows - 2 }]
