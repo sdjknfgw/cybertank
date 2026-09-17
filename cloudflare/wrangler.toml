@@ -2,6 +2,10 @@ name = "cybertank"
 main = "worker.js"
 compatibility_date = "2025-09-01"
 
+routes = [
+  { pattern = "api.sdjknfgw.icu", custom_domain = true }
+]
+
 [[d1_databases]]
 binding = "DB"
 database_name = "cybertank"

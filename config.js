@@ -10,17 +10,15 @@
  *     → 自动使用下方 CLOUD_API 云端后端（Cloudflare Workers + D1）
  *
  * 云端后端信息（2026-09-17 部署）：
- *   地址：  https://cybertank.cybertank-2314514243.workers.dev/api
+ *   地址：  https://api.sdjknfgw.icu/api（自定义域名，国内可访问）
+ *   备用：  https://cybertank.cybertank-2314514243.workers.dev/api
+ *           （workers.dev 默认域名，国内被阻断，海外可用）
  *   账号：  Cloudflare 2314514243@qq.com
  *   数据库：D1 "cybertank"（用户/成绩/云存档持久化）
- *
- * ⚠ 国内直连 workers.dev 被阻断（DNS+SNI 双重污染）：
- *   海外/代理网络可正常使用；国内访客需绑定自定义域名后
- *   将 CLOUD_API 改为 https://api.你的域名/api 即可。
  * ========================================================== */
 (function () {
     'use strict';
-    var CLOUD_API = 'https://cybertank.cybertank-2314514243.workers.dev/api';
+    var CLOUD_API = 'https://api.sdjknfgw.icu/api';
     // https 环境（GitHub Pages 等网页部署）走云端；本地（file://、localhost、局域网）走同源后端
     window.CT_API_BASE = (location.protocol === 'https:') ? CLOUD_API : '';
 })();
