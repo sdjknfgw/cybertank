@@ -30,6 +30,27 @@
   /* ============================================================
    *  波次管理器对象
    * ============================================================ */
+
+  /**
+   * 点位是否落在牵引力地形（ice 0.2 / mud 0.6 / boost 1.6）上。
+   * 冰/泥/加速带均 blockTank=false，findSafeSpawn 的阻挡网格不会避开它们；
+   * AI 出生在冰/泥上移速被地形拖到 0.2x/0.6x，随机地图下不同局观感差异
+   * 巨大（「重开后 AI 移速异常」的观感来源），刷点时需显式规避。
+   * 按 40px 车身盒检测（车身压到地形即算命中，出生即拖慢）。
+   */
+  function _onTractionTerrain(obstacles, x, y) {
+    var R = 20;
+    for (var i = 0; i < (obstacles ? obstacles.length : 0); i++) {
+      var ob = obstacles[i];
+      if (!ob || !ob.alive) continue;
+      if (ob.type !== 'ice' && ob.type !== 'mud' && ob.type !== 'boost') continue;
+      var bb = ob.aabb || ob._box;
+      if (!bb) continue;
+      if (x + R > bb.x && x - R < bb.x + bb.w && y + R > bb.y && y - R < bb.y + bb.h) return true;
+    }
+    return false;
+  }
+
   const WaveManager = {
     /** @type {number} 当前波次（从 1 开始） */
     current: 0,
@@ -330,11 +351,10 @@
       const pts = [];
       const sides = ['top', 'bottom', 'left', 'right'];
       const OB = window.CT_OBSTACLE;
-      for (let i = 0; i < n; i++) {
-        /* 随机选边（原先 i%4 固定循环 top→bottom→left→right，
-         * 第一只敌人永远从顶边出 → 玩家可蹲点守边。改为每只独立随机选边） */
+
+      /* 随机选边 + 抖动 ±35% 边长 + 防围死挪点，产出单个候选刷点 */
+      const pickOne = () => {
         const side = sides[(Math.random() * sides.length) | 0];
-        // 边上位置抖动 ±35% 边长（原 ±25%，进一步降低可预测性）
         const jitter = (Math.random() - 0.5) * 0.7;
         let x, y;
         if (side === 'top') {
@@ -357,7 +377,19 @@
           const safe = OB.findSafeSpawn(obstacles, MW, MH, x, y, 420);
           x = safe.x; y = safe.y;
         }
-        pts.push({ x: x, y: y });
+        return { x: x, y: y };
+      };
+
+      for (let i = 0; i < n; i++) {
+        let pt = pickOne();
+        /* 规避牵引力地形：冰 0.2/泥 0.6/加速带 1.6 非阻挡、findSafeSpawn 不避开，
+         * 出生在冰/泥上会把 AI 移速拖慢（重开后随机地图观感「移速异常」的根源）。
+         * 最多重试 6 次，找不到纯净点则接受（地形密度低，6 次命中率极高）。 */
+        if (obstacles && obstacles.length) {
+          let tries = 0;
+          while (tries++ < 6 && _onTractionTerrain(obstacles, pt.x, pt.y)) pt = pickOne();
+        }
+        pts.push(pt);
       }
       return pts;
     },
