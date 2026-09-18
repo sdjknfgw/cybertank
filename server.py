@@ -55,6 +55,13 @@ USERNAME_RE = re.compile(r'^[A-Za-z0-9_\u4e00-\u9fa5]{1,16}$')  # 1~16 位：字
 
 MODE_WHITELIST = {'horde', 'battle-royale', 'king-hill', 'duel', 'kingdefend', 'online'}
 
+# ---- 联机段位（PvP）：积分规则与前端 js/systems/pvp.js 保持一致 ----
+PVP_DEFAULT_RATING = 1000
+PVP_FLOOR = 900
+# ---- 在线房间登记：内存态 {code: {name, rating, ts}}，心跳续期，过期即失效 ----
+ROOM_TTL = 20          # 秒：超过未心跳的房间自动从列表消失
+_ROOMS = {}
+
 MIME = {
     '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8',
     '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
@@ -122,6 +129,9 @@ def _create_user(username, password):
         'tokens': {},
         'profile': None,
         'scores': [],
+        'pvpRating': PVP_DEFAULT_RATING,
+        'pvpWins': 0,
+        'pvpLosses': 0,
     }
 
 
@@ -232,7 +242,13 @@ class Handler(SimpleHTTPRequestHandler):
         return auth[7:].strip() if auth.startswith('Bearer ') else None
 
     def _public_user(self, rec):
-        return {'username': rec['username'], 'created_at': rec.get('created_at', 0)}
+        return {
+            'username': rec['username'],
+            'created_at': rec.get('created_at', 0),
+            'pvpRating': int(rec.get('pvpRating', PVP_DEFAULT_RATING) or PVP_DEFAULT_RATING),
+            'pvpWins': int(rec.get('pvpWins', 0) or 0),
+            'pvpLosses': int(rec.get('pvpLosses', 0) or 0),
+        }
 
     # ---------- 路由 ----------
     def do_OPTIONS(self):
@@ -275,6 +291,36 @@ class Handler(SimpleHTTPRequestHandler):
                 r['score'] = int(r['score'] or 0)
                 out.append(r)
             return self._json({'ok': True, 'rows': out, 'count': len(out)})
+        if path == '/api/pvp/ladder':
+            # 联机段位天梯：按积分排（只列打过至少 1 场的玩家）
+            qs = parse_qs(parsed.query)
+            limit = min(100, max(1, int((qs.get('limit') or ['50'])[0])))
+            with _LOCK:
+                rows = []
+                for rec in _iter_users():
+                    w = int(rec.get('pvpWins', 0) or 0)
+                    l = int(rec.get('pvpLosses', 0) or 0)
+                    if w + l <= 0:
+                        continue
+                    rows.append({
+                        'username': rec['username'],
+                        'rating': int(rec.get('pvpRating', PVP_DEFAULT_RATING) or PVP_DEFAULT_RATING),
+                        'wins': w, 'losses': l,
+                    })
+            rows.sort(key=lambda r: (-r['rating'], r['username'].lower()))
+            for i, r in enumerate(rows[:limit]):
+                r['rank'] = i + 1
+            return self._json({'ok': True, 'rows': rows[:limit], 'count': len(rows[:limit])})
+        if path == '/api/rooms':
+            # 在线房间列表：只返回心跳未过期（ROOM_TTL 秒）的房间
+            now = time.time()
+            with _LOCK:
+                rows = [
+                    {'code': c, 'name': v['name'], 'rating': v['rating'], 'ts': v['ts']}
+                    for c, v in _ROOMS.items() if now - v['ts'] <= ROOM_TTL
+                ]
+            rows.sort(key=lambda r: -r['ts'])
+            return self._json({'ok': True, 'rows': rows[:50], 'count': len(rows[:50])})
         # 其余 → 静态文件
         return super().do_GET()
 
@@ -380,6 +426,62 @@ class Handler(SimpleHTTPRequestHandler):
                 best = max([float(s.get('score') or 0) for s in scores if s.get('mode') == mode] + [score])
                 _save_user(rec)
             return self._json({'ok': True, 'best': int(best)})
+        if path == '/api/pvp/result':
+            # 联机对局结算：胜 +25-2×负局 / 负 -(16-2×胜局)，下限 900（与前端 pvp.js 一致）
+            body = json_body(self) or {}
+            win = bool(body.get('win'))
+            try:
+                rw = max(0, min(3, int(body.get('roundsWon') or 0)))
+                rl = max(0, min(3, int(body.get('roundsLost') or 0)))
+            except (TypeError, ValueError):
+                rw = rl = 0
+            delta = (25 - 2 * rl) if win else -(16 - 2 * rw)
+            with _LOCK:
+                rec = user_by_token(self._bearer())
+                if not rec:
+                    return self._json({'ok': False, 'error': '未登录'}, 401)
+                rating = int(rec.get('pvpRating', PVP_DEFAULT_RATING) or PVP_DEFAULT_RATING)
+                rating = max(PVP_FLOOR, rating + delta)
+                rec['pvpRating'] = rating
+                if win:
+                    rec['pvpWins'] = int(rec.get('pvpWins', 0) or 0) + 1
+                else:
+                    rec['pvpLosses'] = int(rec.get('pvpLosses', 0) or 0) + 1
+                _save_user(rec)
+                pub = self._public_user(rec)
+            return self._json({'ok': True, 'delta': delta, 'user': pub})
+        if path == '/api/rooms':
+            # 房间登记/心跳（房主）：upsert {code, rating}
+            body = json_body(self) or {}
+            code = str(body.get('code') or '').strip().upper()
+            if not re.match(r'^[A-Z0-9]{4,8}$', code):
+                return self._json({'ok': False, 'error': '房间号格式不合法'}, 400)
+            try:
+                rating = max(900, min(3999, int(body.get('rating') or PVP_DEFAULT_RATING)))
+            except (TypeError, ValueError):
+                rating = PVP_DEFAULT_RATING
+            with _LOCK:
+                rec = user_by_token(self._bearer())
+                if not rec:
+                    return self._json({'ok': False, 'error': '未登录'}, 401)
+                _ROOMS[code] = {'name': rec['username'], 'rating': rating, 'ts': time.time()}
+                # 顺手清理过期房间，防止长期运行累积
+                now = time.time()
+                for c in [c for c, v in _ROOMS.items() if now - v['ts'] > ROOM_TTL * 10]:
+                    _ROOMS.pop(c, None)
+            return self._json({'ok': True})
+        if path == '/api/rooms/remove':
+            # 房主撤下房间
+            body = json_body(self) or {}
+            code = str(body.get('code') or '').strip().upper()
+            with _LOCK:
+                rec = user_by_token(self._bearer())
+                if not rec:
+                    return self._json({'ok': False, 'error': '未登录'}, 401)
+                v = _ROOMS.get(code)
+                if v and v['name'] == rec['username']:
+                    _ROOMS.pop(code, None)
+            return self._json({'ok': True})
         return self._json({'ok': False, 'error': 'Not Found'}, 404)
 
     def end_headers(self):

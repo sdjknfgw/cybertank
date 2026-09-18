@@ -513,6 +513,16 @@
                 renderLocalFallback();
                 return;
             }
+            /* 联机对战 Tab：全球段位天梯（不比分数，比段位积分与战绩） */
+            if (id === 'online') {
+                BE.pvpLadder(50).then((data) => {
+                    if (mySeq !== seq || !content.isConnected) return;
+                    content.innerHTML = '';
+                    if (data && Array.isArray(data.rows) && data.rows.length) renderPvpLadder(data.rows);
+                    else renderLocalFallback(true);
+                }).catch(() => { if (mySeq === seq) renderLocalFallback(); });
+                return;
+            }
             BE.leaderboard(LB_API_MODE[id] || id, 50).then((data) => {
                 if (mySeq !== seq || !content.isConnected) return;   /* 过期结果（弹窗已关 / 已切 Tab） */
                 content.innerHTML = '';
@@ -552,6 +562,49 @@
                 tbl.appendChild(tr);
             });
             content.appendChild(tbl);
+        }
+
+        /* 联机段位天梯：排名 / 玩家 / 段位 / 积分 / 战绩 / 胜率 */
+        function renderPvpLadder(rows) {
+            const PVP = global.CT_PVP;
+            const BE = global.CT_BACKEND;
+            let me = '';
+            try {
+                const u = BE && BE.getUser && BE.getUser();
+                if (u && u.username) me = u.username;
+            } catch (_) {}
+            const list = h('div', 'border border-neon-gold/30 rounded-lg overflow-hidden');
+            const th = h('div', 'flex px-4 py-2.5 bg-neon-gold/10 font-tech text-glow-gold text-xs border-b border-neon-gold/30');
+            th.appendChild(h('span', 'w-14 text-center', '排名'));
+            th.appendChild(h('span', 'flex-1', '玩家'));
+            th.appendChild(h('span', 'w-28', '段位'));
+            th.appendChild(h('span', 'w-16 text-right', '积分'));
+            th.appendChild(h('span', 'w-20 text-right', '战绩'));
+            th.appendChild(h('span', 'w-14 text-right', '胜率'));
+            list.appendChild(th);
+            rows.forEach((r, i) => {
+                const isMe = !!(me && r.username === me);
+                const rating = Number(r.rating) || 1000;
+                const t = PVP && PVP.tierOf ? PVP.tierOf(rating) : null;
+                const wins = Number(r.wins) || 0, losses = Number(r.losses) || 0;
+                const total = wins + losses;
+                const winRate = total ? Math.round(wins * 100 / total) : 0;
+                const tr = h('div', 'flex px-4 py-2.5 items-center text-sm ' + (isMe ? 'bg-neon-gold/10' : (i % 2 ? 'bg-neon-cyan/5' : '')));
+                const medal = ['🥇', '🥈', '🥉'][(r.rank || (i + 1)) - 1] || String(r.rank || (i + 1));
+                tr.appendChild(h('span', 'w-14 text-center font-mono text-base', medal));
+                tr.appendChild(h('span', 'flex-1 truncate' + (isMe ? ' text-neon-gold font-bold' : ' text-text-hi'), r.username || '???'));
+                tr.appendChild(h('span', 'w-28 font-bold',
+                    t ? (t.emoji + ' ' + t.name) : '—'));
+                if (t) tr.lastChild.style.color = t.color;
+                tr.appendChild(h('span', 'w-16 text-right font-mono text-glow-gold', String(rating)));
+                tr.appendChild(h('span', 'w-20 text-right font-mono', wins + '胜' + losses + '负'));
+                tr.appendChild(h('span', 'w-14 text-right font-mono', total ? (winRate + '%') : '—'));
+                list.appendChild(tr);
+            });
+            const tip = h('div', 'mt-2 text-center text-text-lo text-xs font-mono',
+                '⚔ 段位天梯：联机对战胜场提升段位分（青铜→白银→黄金→铂金→钻石→王者）');
+            content.appendChild(list);
+            content.appendChild(tip);
         }
 
         /* 全球榜单：排名 / 玩家 / 分数 / 波次 / 时长 / 日期 */
@@ -978,7 +1031,27 @@
 
         container.appendChild(h('h2', 'font-tech text-[2rem] text-glow-cyan tracking-widest mb-1', '联机对战 1v1'));
         container.appendChild(h('div', 'text-text-lo text-xs font-mono mb-2', 'ONLINE · P2P 直连（WebRTC），无需额外服务器，双人浏览器实时对战'));
+        /* 我的段位：随登录账号展示 */
+        const PVP = global.CT_PVP;
+        const myProf = PVP && PVP.myProfile ? PVP.myProfile() : null;
+        if (myProf) {
+            const tierLine = h('div', 'mb-4 text-base');
+            tierLine.innerHTML = '我的段位：' + PVP.tierBadge(myProf.rating, true) +
+                ' <span class="text-text-mid text-sm">· ' + myProf.wins + '胜 ' + myProf.losses + '负</span>';
+            const nt = PVP.nextTierOf(myProf.rating);
+            if (nt) {
+                const gap = nt.min - myProf.rating;
+                tierLine.innerHTML += ' <span class="text-text-lo text-xs">（再赢约 ' + Math.max(1, Math.ceil(gap / 21)) + ' 场升 ' + nt.emoji + nt.name + '）</span>';
+            } else {
+                tierLine.innerHTML += ' <span class="text-xs" style="color:#ff2a6d">已达最高段位</span>';
+            }
+            container.appendChild(tierLine);
+        }
         container.appendChild(h('div', 'text-text-mid text-sm mb-6', '已选坦克：' + tankById(_state.tank).name + '（可在上一步的「坦克工坊」更换）'));
+
+        /* 房间列表轮询：进入大厅时启动，离开/开战时停止 */
+        if (MENU._lobbyRoomsTimer) { clearInterval(MENU._lobbyRoomsTimer); MENU._lobbyRoomsTimer = null; }
+        const stopRoomsPoll = () => { if (MENU._lobbyRoomsTimer) { clearInterval(MENU._lobbyRoomsTimer); MENU._lobbyRoomsTimer = null; } };
 
         const panel = h('div', 'neon-panel flex flex-col gap-4 items-stretch', '');
         corners(panel);
@@ -994,13 +1067,17 @@
         rowJoin.appendChild(input); rowJoin.appendChild(btnJoin);
         const btnMatch = h('button', 'ct-neon-btn btn-ghost !text-lg !h-14', '⚡ 快速匹配（自动排队）');
 
-        btnCreate.addEventListener('click', () => { CT_MODE_ONLINE && CT_MODE_ONLINE.start({ mode: 'create', tank: _state.tank, skin: tankColor() }); });
+        const joinRoom = (id) => {
+            stopRoomsPoll();
+            CT_MODE_ONLINE && CT_MODE_ONLINE.start({ mode: 'join', roomId: String(id).toUpperCase(), tank: _state.tank, skin: tankColor() });
+        };
+        btnCreate.addEventListener('click', () => { stopRoomsPoll(); CT_MODE_ONLINE && CT_MODE_ONLINE.start({ mode: 'create', tank: _state.tank, skin: tankColor() }); });
         btnJoin.addEventListener('click', () => {
             const id = (input.value || '').trim().toUpperCase();
             if (!id) { MODAL && MODAL.showToast('请输入房间号', 'warn'); return; }
-            CT_MODE_ONLINE && CT_MODE_ONLINE.start({ mode: 'join', roomId: id, tank: _state.tank, skin: tankColor() });
+            joinRoom(id);
         });
-        btnMatch.addEventListener('click', () => { CT_MODE_ONLINE && CT_MODE_ONLINE.start({ mode: 'match', tank: _state.tank, skin: tankColor() }); });
+        btnMatch.addEventListener('click', () => { stopRoomsPoll(); CT_MODE_ONLINE && CT_MODE_ONLINE.start({ mode: 'match', tank: _state.tank, skin: tankColor() }); });
 
         panel.appendChild(h('div', 'text-text-mid font-tech tracking-widest text-sm text-center', '方式一'));
         panel.appendChild(btnCreate);
@@ -1010,9 +1087,53 @@
         panel.appendChild(btnMatch);
         container.appendChild(panel);
 
+        /* ---------- 在线房间列表（全球，含房主段位，点击即加入） ---------- */
+        const roomsPanel = h('div', 'neon-panel flex flex-col gap-2 items-stretch', '');
+        corners(roomsPanel);
+        roomsPanel.style.cssText += 'padding:18px 24px;min-width:360px;max-height:240px;overflow-y:auto';
+        const roomsTitle = h('div', 'flex items-center justify-between');
+        roomsTitle.appendChild(h('span', 'font-tech tracking-widest text-sm text-text-mid', '📡 在线房间（展示房主段位）'));
+        const btnRefresh = h('button', 'ct-neon-btn btn-ghost !h-8 !px-3 !text-xs', '↻ 刷新');
+        roomsTitle.appendChild(btnRefresh);
+        roomsPanel.appendChild(roomsTitle);
+        const roomsList = h('div', 'flex flex-col gap-1.5');
+        roomsPanel.appendChild(roomsList);
+        container.appendChild(roomsPanel);
+
+        function renderRooms(rows) {
+            roomsList.innerHTML = '';
+            if (!rows || !rows.length) {
+                roomsList.appendChild(h('div', 'py-4 text-center text-text-lo text-sm', '暂无在线房间 — 创建一个，或把房间号发给好友'));
+                return;
+            }
+            rows.forEach((r) => {
+                const row = h('div', 'flex items-center gap-3 px-3 py-2 rounded-lg bg-black/30 border border-neon-cyan/20');
+                row.appendChild(h('span', 'font-mono text-glow-cyan tracking-widest', String(r.code || '').toUpperCase()));
+                row.appendChild(h('span', 'flex-1 truncate text-text-hi text-sm', r.name || '玩家'));
+                const badge = h('span', 'text-sm font-bold');
+                badge.innerHTML = (PVP && PVP.tierBadge) ? PVP.tierBadge(r.rating, true) : (r.rating || 1000);
+                row.appendChild(badge);
+                const btn = h('button', 'ct-neon-btn btn-ghost !h-8 !px-4 !text-xs', '加入');
+                btn.addEventListener('click', () => joinRoom(r.code));
+                row.appendChild(btn);
+                roomsList.appendChild(row);
+            });
+        }
+        async function refreshRooms() {
+            const BE = global.CT_BACKEND;
+            if (!BE || typeof BE.roomsList !== 'function') return;
+            const data = await BE.roomsList();
+            if (!roomsList.isConnected) { stopRoomsPoll(); return; }
+            if (data && data.ok && Array.isArray(data.rows)) renderRooms(data.rows);
+            else roomsList.innerHTML = '<div class="py-4 text-center text-text-lo text-sm">⚠ 无法获取房间列表（服务器离线）</div>';
+        }
+        btnRefresh.addEventListener('click', () => refreshRooms());
+        refreshRooms();
+        MENU._lobbyRoomsTimer = setInterval(refreshRooms, 5000);
+
         const footers = h('div', 'flex gap-4 mt-6');
         const back = h('button', 'ct-neon-btn btn-ghost !px-6', '← 返回模式选择');
-        back.addEventListener('click', () => MENU.renderModeSelect());
+        back.addEventListener('click', () => { stopRoomsPoll(); MENU.renderModeSelect(); });
         footers.appendChild(back);
         container.appendChild(footers);
 

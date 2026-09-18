@@ -92,7 +92,7 @@ async function authUser(env, req) {
     const token = auth.slice(7).trim();
     if (!token) return null;
     const now = Math.floor(Date.now() / 1000);
-    const rows = await env.DB.prepare('SELECT id, username, pass_hash, salt, created_at, tokens, profile FROM users').all();
+    const rows = await env.DB.prepare('SELECT id, username, pass_hash, salt, created_at, tokens, profile, pvp_rating, pvp_wins, pvp_losses FROM users').all();
     for (const u of (rows.results || [])) {
         let toks = {};
         try { toks = JSON.parse(u.tokens || '{}') || {}; } catch (_) {}
@@ -102,7 +102,13 @@ async function authUser(env, req) {
 }
 
 function publicUser(u) {
-    return { username: u.username, created_at: u.created_at || 0 };
+    return {
+        username: u.username,
+        created_at: u.created_at || 0,
+        pvpRating: Number(u.pvp_rating != null ? u.pvp_rating : 1000) || 1000,
+        pvpWins: Number(u.pvp_wins) || 0,
+        pvpLosses: Number(u.pvp_losses) || 0,
+    };
 }
 
 export default {
@@ -120,7 +126,7 @@ export default {
                 const password = String(body.password || '');
                 const err = validateCredentials(username, password);
                 if (err) return json({ ok: false, error: err }, 400);
-                const row = await env.DB.prepare('SELECT id, username, pass_hash, salt, created_at FROM users WHERE username = ?1 COLLATE NOCASE')
+                const row = await env.DB.prepare('SELECT id, username, pass_hash, salt, created_at, pvp_rating, pvp_wins, pvp_losses FROM users WHERE username = ?1 COLLATE NOCASE')
                     .bind(username).first();
                 if (!row) {
                     const salt = randomHex(16);
@@ -131,7 +137,7 @@ export default {
                         .bind(username, pass_hash, salt, created_at, '{}', null).run();
                     const id = ins.meta && ins.meta.last_row_id;
                     const token = await issueToken(env, id, '{}');
-                    return json({ ok: true, token, created: true, user: { username, created_at } });
+                    return json({ ok: true, token, created: true, user: { username, created_at, pvpRating: 1000, pvpWins: 0, pvpLosses: 0 } });
                 }
                 if ((await hashPassword(password, row.salt)) !== row.pass_hash) {
                     return json({ ok: false, error: '该用户名已被注册且密码不符' }, 401);
@@ -156,7 +162,7 @@ export default {
                     'INSERT INTO users (username, pass_hash, salt, created_at, tokens, profile) VALUES (?1, ?2, ?3, ?4, ?, ?)')
                     .bind(username, pass_hash, salt, created_at, '{}', null).run();
                 const token = await issueToken(env, ins.meta.last_row_id, '{}');
-                return json({ ok: true, token, user: { username, created_at } });
+                return json({ ok: true, token, user: { username, created_at, pvpRating: 1000, pvpWins: 0, pvpLosses: 0 } });
             }
 
             /* ---------- 登录 ---------- */
@@ -164,7 +170,7 @@ export default {
                 const body = (await readJson(req)) || {};
                 const username = String(body.username || '').trim();
                 const password = String(body.password || '');
-                const row = await env.DB.prepare('SELECT id, username, pass_hash, salt, created_at, tokens FROM users WHERE username = ?1 COLLATE NOCASE')
+                const row = await env.DB.prepare('SELECT id, username, pass_hash, salt, created_at, tokens, pvp_rating, pvp_wins, pvp_losses FROM users WHERE username = ?1 COLLATE NOCASE')
                     .bind(username).first();
                 if (!row || (await hashPassword(password, row.salt)) !== row.pass_hash) {
                     return json({ ok: false, error: '用户名或密码错误' }, 401);
@@ -264,6 +270,82 @@ export default {
                     rank: i + 1,
                 }));
                 return json({ ok: true, rows: out, count: out.length });
+            }
+
+            /* ---------- 联机段位：对局结算（胜 +25-2×负局 / 负 -(16-2×胜局)，下限 900） ---------- */
+            if (path === '/api/pvp/result' && req.method === 'POST') {
+                const u = await authUser(env, req);
+                if (!u) return json({ ok: false, error: '未登录' }, 401);
+                const body = (await readJson(req)) || {};
+                const win = !!body.win;
+                const rw = Math.max(0, Math.min(3, parseInt(body.roundsWon, 10) || 0));
+                const rl = Math.max(0, Math.min(3, parseInt(body.roundsLost, 10) || 0));
+                const delta = win ? (25 - 2 * rl) : -(16 - 2 * rw);
+                const rating = Math.max(900, (Number(u.pvp_rating) || 1000) + delta);
+                await env.DB.prepare(
+                    'UPDATE users SET pvp_rating=?1, pvp_wins=?2, pvp_losses=?3 WHERE id=?4')
+                    .bind(rating, (Number(u.pvp_wins) || 0) + (win ? 1 : 0),
+                          (Number(u.pvp_losses) || 0) + (win ? 0 : 1), u.id).run();
+                return json({ ok: true, delta, user: {
+                    username: u.username, created_at: u.created_at || 0,
+                    pvpRating: rating,
+                    pvpWins: (Number(u.pvp_wins) || 0) + (win ? 1 : 0),
+                    pvpLosses: (Number(u.pvp_losses) || 0) + (win ? 0 : 1),
+                } });
+            }
+
+            /* ---------- 联机段位：全球天梯（按积分，只列打过 ≥1 场的玩家） ---------- */
+            if (path === '/api/pvp/ladder' && req.method === 'GET') {
+                const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') || '50', 10) || 50));
+                const rows = await env.DB.prepare(
+                    'SELECT username, pvp_rating, pvp_wins, pvp_losses FROM users ' +
+                    'WHERE pvp_wins + pvp_losses > 0 ORDER BY pvp_rating DESC, username COLLATE NOCASE ASC LIMIT ?1')
+                    .bind(limit).all();
+                const out = (rows.results || []).map((r, i) => ({
+                    username: r.username,
+                    rating: Number(r.pvp_rating) || 1000,
+                    wins: Number(r.pvp_wins) || 0,
+                    losses: Number(r.pvp_losses) || 0,
+                    rank: i + 1,
+                }));
+                return json({ ok: true, rows: out, count: out.length });
+            }
+
+            /* ---------- 在线房间：列表（心跳 20s 内有效） ---------- */
+            if (path === '/api/rooms' && req.method === 'GET') {
+                const now = Date.now();
+                await env.DB.prepare('DELETE FROM rooms WHERE ts < ?1').bind(now - 20000).run();
+                const rows = await env.DB.prepare(
+                    'SELECT code, username, rating, ts FROM rooms ORDER BY ts DESC LIMIT 50').all();
+                const out = (rows.results || []).map((r) => ({
+                    code: r.code, name: r.username, rating: Number(r.rating) || 1000, ts: r.ts,
+                }));
+                return json({ ok: true, rows: out, count: out.length });
+            }
+
+            /* ---------- 在线房间：登记/心跳（房主 upsert） ---------- */
+            if (path === '/api/rooms' && req.method === 'POST') {
+                const u = await authUser(env, req);
+                if (!u) return json({ ok: false, error: '未登录' }, 401);
+                const body = (await readJson(req)) || {};
+                const code = String(body.code || '').trim().toUpperCase();
+                if (!/^[A-Z0-9]{4,8}$/.test(code)) return json({ ok: false, error: '房间号格式不合法' }, 400);
+                const rating = Math.max(900, Math.min(3999, parseInt(body.rating, 10) || 1000));
+                await env.DB.prepare(
+                    'INSERT INTO rooms (code, username, rating, ts) VALUES (?1, ?2, ?3, ?4) ' +
+                    'ON CONFLICT(code) DO UPDATE SET username=?2, rating=?3, ts=?4')
+                    .bind(code, u.username, rating, Date.now()).run();
+                return json({ ok: true });
+            }
+
+            /* ---------- 在线房间：房主撤下 ---------- */
+            if (path === '/api/rooms/remove' && req.method === 'POST') {
+                const u = await authUser(env, req);
+                if (!u) return json({ ok: false, error: '未登录' }, 401);
+                const body = (await readJson(req)) || {};
+                const code = String(body.code || '').trim().toUpperCase();
+                await env.DB.prepare('DELETE FROM rooms WHERE code=?1 AND username=?2').bind(code, u.username).run();
+                return json({ ok: true });
             }
 
             return json({ ok: false, error: 'Not Found' }, 404);

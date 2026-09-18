@@ -82,6 +82,7 @@
             const data = await request('/me');
             if (data && data.ok && data.user) {
                 state.user = data.user;
+                authChanged();   // 恢复登录也要广播：左下角账号名等 UI 需就地刷新
                 return state.user;
             }
             setToken('');        // token 失效：清除凭证，保持离线态
@@ -153,6 +154,40 @@
         if (!BE.isLoggedIn() || !rec || !rec.mode) return false;
         const data = await request('/scores', { method: 'POST', body: rec });
         return !!(data && data.ok);
+    };
+
+    /* ---------- 联机段位 / 房间登记 ---------- */
+    /* 对局结算上报：{win, roundsWon, roundsLost} → {ok, user}（失败返回 null） */
+    BE.pvpResult = async function (win, roundsWon, roundsLost) {
+        if (!BE.isLoggedIn()) return null;
+        const data = await request('/pvp/result', {
+            method: 'POST', body: { win: win ? 1 : 0, roundsWon: roundsWon, roundsLost: roundsLost }
+        });
+        if (data && data.ok) {
+            if (data.user) state.user = data.user;
+            return data;
+        }
+        return null;
+    };
+
+    /* 段位天梯：{ok, rows:[{username,rating,wins,losses}]} */
+    BE.pvpLadder = async function (limit) {
+        return request('/pvp/ladder?limit=' + encodeURIComponent(String(limit || 50)));
+    };
+
+    /* 房间登记（房主）：心跳续期用同一接口（upsert），失败静默返回 null */
+    BE.roomsUpsert = async function (code, rating) {
+        if (!BE.isLoggedIn()) return null;
+        return request('/rooms', { method: 'POST', body: { code: code, rating: rating } });
+    };
+
+    /* 房间列表：{ok, rows:[{code,name,rating,ts}]} */
+    BE.roomsList = async function () { return request('/rooms'); };
+
+    /* 移除自己的房间（房主退出/终局） */
+    BE.roomsRemove = async function (code) {
+        if (!BE.isLoggedIn()) return null;
+        return request('/rooms/remove', { method: 'POST', body: { code: code } });
     };
 
     /* 云档上传：把本地所有 ct_ 前缀 localStorage 键打包为一个 profile 快照。

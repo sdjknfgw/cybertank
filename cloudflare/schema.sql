@@ -6,8 +6,24 @@ CREATE TABLE IF NOT EXISTS users (
     salt        TEXT NOT NULL,                        -- 32 hex 字符盐
     created_at  INTEGER NOT NULL,                     -- 注册时间（秒级时间戳）
     tokens      TEXT NOT NULL DEFAULT '{}',           -- 登录令牌 JSON {token: 过期秒级时间戳}
-    profile     TEXT                                  -- 云端存档 JSON（前端 ct_* 快照）
+    profile     TEXT,                                 -- 云端存档 JSON（前端 ct_* 快照）
+    pvp_rating  INTEGER NOT NULL DEFAULT 1000,        -- 联机段位积分（初始 1000，下限 900）
+    pvp_wins    INTEGER NOT NULL DEFAULT 0,           -- 联机胜场
+    pvp_losses  INTEGER NOT NULL DEFAULT 0            -- 联机负场
 );
+
+-- 在线房间登记（房主心跳 20s 续期，过期由 GET /api/rooms 清理）
+CREATE TABLE IF NOT EXISTS rooms (
+    code        TEXT PRIMARY KEY,                     -- 6 位房间号
+    username    TEXT NOT NULL,                        -- 房主名
+    rating      INTEGER NOT NULL DEFAULT 1000,        -- 房主段位积分
+    ts          INTEGER NOT NULL                      -- 最近心跳毫秒时间戳
+);
+
+-- ★ 已有旧库的迁移（在 D1 Console / wrangler d1 execute 逐条执行一次）：
+--   ALTER TABLE users ADD COLUMN pvp_rating INTEGER NOT NULL DEFAULT 1000;
+--   ALTER TABLE users ADD COLUMN pvp_wins   INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE users ADD COLUMN pvp_losses INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS scores (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

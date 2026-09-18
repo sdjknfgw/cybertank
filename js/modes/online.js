@@ -43,6 +43,13 @@
   var sim = null;           // 房主端的权威模拟（online-host.js Sim）
   var tickTimer = null;     // 房主 30Hz 模拟定时器
   var joinWatch = null;     // 对手侧连接超时看门狗
+  var profiles = [null, null]; // 双方资料 {name,rating,wins,losses}（下标=槽位：0=房主 1=对手）
+  var registeredCode = null;   // 已登记到服务器的房间号（建房模式）
+  var roomHeartbeat = null;    // 房间登记心跳定时器
+  var pvpReported = false;     // 本局段位是否已上报（防重复）
+  var ended = false;           // 本局已结算（防重复弹卡/迟到的断线事件覆盖结算）
+  var hbTimer = null;          // 对战连接心跳定时器（2s 发 ping）
+  var lastPeerDataT = 0;       // 最近一次收到对手数据的时刻（看门狗判离线）
 
   // PeerID 命名空间（公共信令服务器全局唯一，加游戏前缀防撞）
   var NS_PREFIX = 'cybertank-1v1-a1-';
@@ -57,6 +64,44 @@
   };
 
   function toastMsg(m, lv) { try { global.CT_TOAST && global.CT_TOAST(m, lv || 'info'); } catch (e) {} }
+
+  /* ---------- 我的 PvP 资料（名称 / 段位分 / 战绩），用于资料交换与房间登记 ---------- */
+  function myPvpProfile() {
+    var P = global.CT_PVP;
+    var p = P && P.myProfile && P.myProfile();
+    return {
+      name: p ? p.name : '玩家001',
+      rating: p ? p.rating : 1000,
+      wins: p ? p.wins : 0, losses: p ? p.losses : 0,
+      tank: opts.tank || 'assault', skin: opts.skin || '#00e5ff',
+    };
+  }
+  /* 槽位 → 顶部计分/血条标签：段位emoji + 截断名（缺资料时回退 P1/P2） */
+  function slotLabel(i) {
+    var p = profiles[i];
+    if (!p) return 'P' + (i + 1);
+    var t = (global.CT_PVP && global.CT_PVP.tierOf) ? global.CT_PVP.tierOf(p.rating) : null;
+    var name = String(p.name || '').slice(0, 8);
+    return (t ? t.emoji + ' ' : '') + name;
+  }
+
+  /* ---------- 房间登记（建房模式）：把房间号+段位挂到服务器列表，心跳续期 ---------- */
+  function startRoomRegistry(code) {
+    var BE = global.CT_BACKEND;
+    if (!BE || typeof BE.roomsUpsert !== 'function') return;
+    registeredCode = code;
+    var prof = myPvpProfile();
+    BE.roomsUpsert(code, prof.rating);
+    roomHeartbeat = setInterval(function () { BE.roomsUpsert(code, prof.rating); }, 6000);
+  }
+  function stopRoomRegistry() {
+    if (roomHeartbeat) { clearInterval(roomHeartbeat); roomHeartbeat = null; }
+    if (registeredCode) {
+      var BE = global.CT_BACKEND;
+      if (BE && typeof BE.roomsRemove === 'function') { try { BE.roomsRemove(registeredCode); } catch (e) {} }
+      registeredCode = null;
+    }
+  }
   function peerjsUrl() { return global.CT_PEERJS_URL || 'js/lib/peerjs.min.js'; }
   function peerIdFor(code) { return NS_PREFIX + String(code).toLowerCase(); }
   function genCode() {
@@ -180,6 +225,14 @@
     if (!started) {
       ctx.fillStyle = '#9fb0c8'; ctx.font = '20px system-ui'; ctx.textAlign = 'center';
       ctx.fillText('等待对手加入… 房间号：' + (roomId || '------'), W / 2, H / 2);
+      // 我的段位（等待期展示，玩家与观战者都能看到）
+      var my = myPvpProfile();
+      var myT = (global.CT_PVP && global.CT_PVP.tierOf) ? global.CT_PVP.tierOf(my.rating) : null;
+      if (myT) {
+        ctx.font = '15px system-ui'; ctx.fillStyle = myT.color;
+        ctx.fillText(myT.emoji + ' ' + my.name + ' · ' + myT.name + ' ' + my.rating +
+          ' · ' + my.wins + '胜' + my.losses + '负', W / 2, H / 2 + 34);
+      }
       ctx.restore();
       drawHud(ctx, W, H);
       return;
@@ -271,24 +324,68 @@
     if (!latest) return;
     ctx.save();
     ctx.textAlign = 'center';
+    /* 顶部计分：双方名称 + 段位emoji（资料未到时回退 P1/P2） */
+    var n0 = slotLabel(0), n1 = slotLabel(1);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#00e5ff'; ctx.font = 'bold 17px system-ui';
+    ctx.fillText(n0, W / 2 - 46, 30);
+    ctx.textAlign = 'center';
     ctx.fillStyle = '#e7ecf3'; ctx.font = 'bold 22px system-ui';
-    ctx.fillText('P1  ' + latest.scores[0] + '  :  ' + latest.scores[1] + '  P2', W / 2, 30);
+    ctx.fillText(latest.scores[0] + ' : ' + latest.scores[1], W / 2, 30);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#ff2a6d'; ctx.font = 'bold 17px system-ui';
+    ctx.fillText(n1, W / 2 + 46, 30);
+    ctx.textAlign = 'center';
     ctx.font = 'bold 13px system-ui'; ctx.fillStyle = '#9fb0c8';
     if (latest.round != null) ctx.fillText('第 ' + latest.round + ' 局 · BO5 先到 3 胜', W / 2, 50);
-    // 双方 5 格血条
-    drawHpBar(ctx, 16, H - 28, latest.tanks[0], '#00e5ff', 'P1');
-    drawHpBar(ctx, W - 16 - 180, H - 28, latest.tanks[1], '#ff2a6d', 'P2');
+    // 双方 5 格血条（标签=名称+段位）
+    drawHpBar(ctx, 16, H - 28, latest.tanks[0], '#00e5ff', n0);
+    drawHpBar(ctx, W - 16 - 180, H - 28, latest.tanks[1], '#ff2a6d', n1);
     ctx.textAlign = 'left';
     ctx.fillStyle = '#7c89a0'; ctx.font = '12px monospace';
     ctx.fillText('房间 ' + (roomId || '--') + (mySlot != null ? (' · 你: P' + (mySlot + 1)) : ''), 12, 22);
     ctx.textAlign = 'center';
     if (latest.phase === 'countdown') {
+      if (latest.round === 1) drawVsCard(ctx, W, H); // 首局：观察对手（双方名称/段位/战绩）
       ctx.fillStyle = '#ffd54a'; ctx.font = 'bold 64px system-ui';
-      ctx.fillText(latest.countdown, W / 2, H / 2);
+      ctx.fillText(Math.max(1, Math.ceil(latest.countdown)), W / 2, H / 2 + 60);
     } else if (latest.phase === 'roundEnd') {
       ctx.fillStyle = '#ffd54a'; ctx.font = 'bold 36px system-ui';
       ctx.fillText(latest.lastWinner === mySlot ? '本回合胜利！' : '本回合失利', W / 2, H / 2);
     }
+    ctx.restore();
+  }
+  /* 首局观察卡：双方 名称/段位/积分/战绩 + VS（倒计时期间覆盖在竞技场上方） */
+  function drawVsCard(ctx, W, H) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(4,7,16,0.72)';
+    ctx.fillRect(0, 0, W, H);
+    var P = global.CT_PVP || {};
+    function block(x, alignRight, color, prof, tag) {
+      var name = prof ? String(prof.name).slice(0, 12) : '……';
+      var t = prof && P.tierOf ? P.tierOf(prof.rating) : null;
+      ctx.textAlign = alignRight ? 'right' : 'left';
+      ctx.fillStyle = color; ctx.font = 'bold 24px system-ui';
+      ctx.fillText(name + (tag || ''), x, H / 2 - 52);
+      if (t) {
+        ctx.fillStyle = t.color; ctx.font = 'bold 16px system-ui';
+        ctx.fillText(t.emoji + ' ' + t.name + ' · ' + prof.rating + '分', x, H / 2 - 26);
+        ctx.fillStyle = '#9fb0c8'; ctx.font = '13px system-ui';
+        ctx.fillText('战绩 ' + (prof.wins || 0) + '胜 ' + (prof.losses || 0) + '负', x, H / 2 - 4);
+      } else {
+        ctx.fillStyle = '#9fb0c8'; ctx.font = '13px system-ui';
+        ctx.fillText('段位资料获取中…', x, H / 2 - 20);
+      }
+    }
+    block(W / 2 - 70, false, '#00e5ff', profiles[0], mySlot === 0 ? '（你）' : '');
+    block(W / 2 + 70, true, '#ff2a6d', profiles[1], mySlot === 1 ? '（你）' : '');
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffd54a'; ctx.font = 'bold 44px system-ui';
+    ctx.shadowColor = '#ffd54a'; ctx.shadowBlur = 18;
+    ctx.fillText('VS', W / 2, H / 2 - 18);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#7c89a0'; ctx.font = '14px system-ui';
+    ctx.fillText('⏱ 观察对手资料，倒计时结束后开战', W / 2, H / 2 + 92);
     ctx.restore();
   }
   function drawHpBar(ctx, x, y, tank, color, label) {
@@ -313,7 +410,12 @@
       mySlot = d.slot; roomId = d.roomId;
       toastMsg('房间已创建：' + d.roomId + '（发给好友加入）');
     }
-    else if (type === 'roomJoined') { mySlot = d.slot; roomId = d.roomId; toastMsg('已加入房间 ' + d.roomId); }
+    else if (type === 'roomJoined') {
+      mySlot = d.slot; roomId = d.roomId;
+      profiles[mySlot != null ? mySlot : 1] = myPvpProfile();   // 我的资料放进自己槽位
+      sendTo({ t: 'hello', d: myPvpProfile() });                // 交换资料：名称/段位/战绩
+      toastMsg('已加入房间 ' + d.roomId);
+    }
     else if (type === 'queued') { toastMsg('匹配队列中，第 ' + d.position + ' 位…'); }
     else if (type === 'peerJoined') { if (d.count >= 2) toastMsg('对手已加入，即将开始！'); }
     else if (type === 'matchStart') { started = true; buildPuppets(); playSfx('ui'); }
@@ -353,14 +455,28 @@
   }
   function onGuestData(m) {
     if (!m || typeof m !== 'object') return;
+    lastPeerDataT = Date.now();                          // 任何数据都证明连接存活
     if (m.t === 'snapshot') { applySnapshot(m.s); return; }
+    if (m.t === 'hello') { profiles[0] = m.d || profiles[0]; return; } // 房主资料
+    if (m.t === 'ping') return;                          // 心跳，无业务
     handleEvent(m.t, m.d || {});
   }
   function onPeerClosed() {
-    if (!active) return;
+    if (!active || ended) return;   // 已结算后迟到的 close 事件不得覆盖/重复结算
     if (started) { handleEvent('opponentLeft', {}); }
     else if (role === 'guest') { toastMsg('连接已断开', 'error'); NS.stop(); }
   }
+  /* 对战连接心跳：DataChannel 的 close 事件在对方标签页直接关闭时可能极迟甚至丢失，
+   * 用应用层双向 ping + 看门狗兜底：7 秒收不到对手任何数据 → 判定对手已离开 */
+  function startHeartbeat() {
+    stopHeartbeat();
+    lastPeerDataT = Date.now();
+    hbTimer = setInterval(function () {
+      sendTo({ t: 'ping' });
+      if (started && lastPeerDataT && Date.now() - lastPeerDataT > 7000) onPeerClosed();
+    }, 2000);
+  }
+  function stopHeartbeat() { if (hbTimer) { clearInterval(hbTimer); hbTimer = null; } }
 
   /* ---------- 房主：权威模拟 30Hz 循环 ---------- */
   function hostTick() {
@@ -399,19 +515,36 @@
     peer.on('open', function () {
       mySlot = 0;
       roomId = matchMode ? '匹配中' : code;
+      profiles[0] = myPvpProfile();            // 房主资料占位（槽位0）
       handleEvent('roomCreated', { roomId: matchMode ? '匹配中' : code, slot: 0 });
       if (matchMode) toastMsg('快速匹配：等待对手连接…');
+      else startRoomRegistry(code);            // 建房模式：登记到服务器房间列表
     });
     peer.on('connection', function (c) {
       if (conn) { try { c.close(); } catch (e) {} return; } // 只接一名对手
       conn = c;
+      // 半开连接看门狗：信令请求已到但 ICE 始终未建立（15s 未 open）→ 丢弃，
+      // 否则房主会永远卡在等待并拒绝后续加入者
+      var openWatch = setTimeout(function () {
+        if (conn === c && !started) {
+          try { c.close(); } catch (e) {}
+          if (conn === c) conn = null;
+        }
+      }, 15000);
       conn.on('open', function () {
+        clearTimeout(openWatch);
         handleEvent('peerJoined', { count: 2 });
+        startHeartbeat();                            // 双向 ping + 断线看门狗
         sendTo({ t: 'roomJoined', d: { roomId: matchMode ? '匹配' : code, slot: 1 } });
+        sendTo({ t: 'hello', d: myPvpProfile() });  // 交换资料：名称/段位/战绩
+        stopRoomRegistry();                          // 已有对手：从房间列表撤下
         beginMatchAsHost(code);
       });
       conn.on('data', function (m) {
+        lastPeerDataT = Date.now();                  // 任何数据都证明连接存活
+        if (m && m.t === 'ping') return;             // 心跳，无业务
         if (m && m.t === 'input' && sim) sim.setInput(1, m.i);
+        else if (m && m.t === 'hello') { profiles[1] = m.d || profiles[1]; } // 对手资料（槽位1）
       });
       conn.on('close', onPeerClosed);
       conn.on('error', onPeerClosed);
@@ -444,6 +577,7 @@
     peer.on('open', function () {
       var target = isMatch ? LOBBY_PEER_ID : peerIdFor(roomCode);
       conn = peer.connect(target, { reliable: true });
+      conn.on('open', startHeartbeat);               // 双向 ping + 断线看门狗
       conn.on('data', onGuestData);
       conn.on('close', onPeerClosed);
       conn.on('error', onPeerClosed);
@@ -463,15 +597,74 @@
     peer.on('disconnected', function () { try { peer && peer.reconnect(); } catch (e) {} });
   }
 
+  /* 段位结算上报：matchEnd=正常比分；opponentLeft=对手中途退出（判我方胜） */
+  function reportPvp(scores, forfeitWin) {
+    if (pvpReported || mySlot == null) return;
+    pvpReported = true;
+    var BE = global.CT_BACKEND;
+    if (!BE || typeof BE.pvpResult !== 'function' || !BE.isLoggedIn()) return;
+    var win, rw, rl;
+    if (forfeitWin) { win = true; rw = 3; rl = (latest && latest.scores) ? (latest.scores[mySlot === 0 ? 1 : 0] || 0) : 0; }
+    else {
+      var opp = mySlot === 0 ? 1 : 0;
+      win = scores[mySlot] > scores[opp];
+      rw = scores[mySlot] || 0; rl = scores[opp] || 0;
+    }
+    BE.pvpResult(win, rw, rl).then(function (res) {
+      var el = document.getElementById('ct-pvp-delta');
+      if (!el) return;
+      if (res && res.user) {
+        var P = global.CT_PVP;
+        var nt = P && P.tierOf ? P.tierOf(res.user.pvpRating) : null;
+        var delta = P && P.ratingDelta ? P.ratingDelta(win, rw, rl) : 0;
+        el.innerHTML = '段位 <b style="color:' + (nt ? nt.color : '#fff') + '">' +
+          (nt ? nt.emoji + ' ' + nt.name : '') + ' ' + res.user.pvpRating + '分</b>' +
+          ' <span style="color:' + (delta >= 0 ? '#7ef0a0' : '#ff7a9c') + '">' +
+          (delta >= 0 ? '+' : '') + delta + '</span> · 总战绩 ' +
+          res.user.pvpWins + '胜 ' + res.user.pvpLosses + '负';
+      } else {
+        el.textContent = '段位结算失败（离线或网络问题），本局未计入天梯';
+      }
+    });
+  }
+
   function onEnd(scores, reason) {
+    if (ended) return;        // 幂等：opponentLeft 与迟到的 matchEnd 只结算一次
+    ended = true;
     started = false;
+    stopRoomRegistry();
+    stopHeartbeat();
+    if (tickTimer) { clearInterval(tickTimer); tickTimer = null; } // 立即停模拟：对手离开后不得再跑幻影回合
+    if (scores) reportPvp(scores, false);
+    else if (reason === '对手已离开') reportPvp(null, true); // 对手中途退出 → 判我方胜
     // 结算覆盖层
     var ov = document.createElement('div');
     ov.style.cssText = 'position:fixed;inset:0;z-index:2000;display:flex;align-items:center;justify-content:center;background:rgba(2,4,12,.7);backdrop-filter:blur(6px)';
     var card = document.createElement('div');
     card.style.cssText = 'padding:32px 56px;border-radius:16px;background:rgba(10,16,36,.9);border:1px solid rgba(0,229,255,.45);text-align:center;font-family:system-ui;color:#e7ecf3';
-    var txt = scores ? ('对战结束　' + scores[0] + ' : ' + scores[1]) : (reason || '对战结束');
-    card.innerHTML = '<div style="font-size:30px;letter-spacing:.1em;color:#ffd54a">' + txt + '</div>';
+    var P = global.CT_PVP;
+    function nameHtml(slot, color) {
+      var p = profiles[slot];
+      if (!p) return '<span style="color:' + color + '">P' + (slot + 1) + '</span>';
+      var t = P && P.tierOf ? P.tierOf(p.rating) : null;
+      return '<span style="color:' + color + '">' + String(p.name).slice(0, 10) + '</span>' +
+        ' <span style="font-size:14px;color:' + (t ? t.color : '#9fb0c8') + '">' +
+        (t ? t.emoji + t.name + ' ' + p.rating : '') + '</span>';
+    }
+    var head;
+    if (scores) {
+      var winnerName = (profiles[scores[0] > scores[1] ? 0 : 1] || {}).name || 'P' + (scores[0] > scores[1] ? 1 : 2);
+      head = '<div style="font-size:26px;letter-spacing:.06em;color:#ffd54a">🏆 ' + String(winnerName).slice(0, 10) + ' 获胜</div>' +
+        '<div style="font-size:20px;margin-top:8px">' + nameHtml(0, '#00e5ff') +
+        ' <b style="color:#e7ecf3">' + scores[0] + ' : ' + scores[1] + '</b> ' + nameHtml(1, '#ff2a6d') + '</div>';
+    } else {
+      var me = profiles[mySlot != null ? mySlot : 0] || {};
+      var rlFf = (latest && latest.scores) ? (latest.scores[mySlot === 0 ? 1 : 0] || 0) : 0;
+      head = '<div style="font-size:26px;letter-spacing:.06em;color:#ffd54a">🏆 ' + String(me.name || 'P1').slice(0, 10) + ' 获胜（对手已离开）</div>' +
+        '<div style="font-size:20px;margin-top:8px">' + nameHtml(0, '#00e5ff') +
+        ' <b style="color:#e7ecf3">3 : ' + rlFf + '</b> ' + nameHtml(1, '#ff2a6d') + '</div>';
+    }
+    card.innerHTML = head + '<div id="ct-pvp-delta" style="margin-top:12px;font-size:15px;color:#9fb0c8">段位结算中…</div>';
     var btnRow = document.createElement('div');
     btnRow.style.cssText = 'margin-top:18px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap;max-width:520px';
     var back = document.createElement('button');
@@ -507,6 +700,7 @@
     opts = o || {};
     if (active) return;
     active = true; started = false; mySlot = null; latest = null; puppets = [null, null];
+    profiles = [null, null]; pvpReported = false; ended = false; lastPeerDataT = 0; stopRoomRegistry(); stopHeartbeat();
     var wrap = document.getElementById('main-menu-wrap');
     if (wrap) wrap.classList.add('hidden');
     var hud = document.getElementById('game-hud-wrap');
@@ -538,13 +732,15 @@
 
   NS.stop = function (silent) {
     active = false; started = false;
+    stopRoomRegistry();                    // 撤下服务器房间列表
+    stopHeartbeat();                       // 停对战心跳看门狗
     if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
     if (joinWatch) { clearTimeout(joinWatch); joinWatch = null; }
     if (conn) { try { conn.close(); } catch (e) {} conn = null; }
     if (peer) { try { peer.destroy(); } catch (e) {} peer = null; }
     sim = null; role = null;
     if (escHandler) { window.removeEventListener('keydown', escHandler); escHandler = null; }
-    puppets = [null, null]; latest = null;
+    puppets = [null, null]; latest = null; profiles = [null, null];
     if (!silent) {
       var MENU = global.CT_UI_MENU;
       if (MENU && MENU.renderMainMenu) MENU.renderMainMenu();

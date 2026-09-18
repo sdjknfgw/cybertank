@@ -51,6 +51,7 @@
   var ROUNDS_TO_WIN = 3;   // BO5 先取 3 局
   var ROUND_TIME = 90;
   var COUNTDOWN = 3;
+  var OBSERVE_COUNTDOWN = 6; // 首局开局观察时间：看清双方名称/段位后再战
   var ROUND_GAP = 2.5;
   var BOUNCE_TIMES = 2;
   var PUP_FIRST = 6;
@@ -170,15 +171,15 @@
   Sim.prototype.takeEvents = function () { var e = this.events; this.events = []; return e; };
   Sim.prototype.setInput = function (slot, raw) { this.tanks[slot].input = sanitizeInput(raw); };
 
-  /* 开局：BO5 重置比分 → 回合倒计时（内部产生 matchStart/mapInit/countdown 事件） */
+  /* 开局：BO5 重置比分 → 首局观察倒计时（内部产生 matchStart/mapInit/countdown 事件） */
   Sim.prototype.start = function () {
     this.phase = 'countdown';
-    this.countdown = COUNTDOWN;
+    this.countdown = OBSERVE_COUNTDOWN;
     this.round = 1;
     this.scores = [0, 0];
     resetRoundEntities(this);
-    this.emit('matchStart', { round: 1 });
-    this.emit('countdown', { n: COUNTDOWN, round: 1 });
+    this.emit('matchStart', { round: 1, observe: OBSERVE_COUNTDOWN });
+    this.emit('countdown', { n: OBSERVE_COUNTDOWN, round: 1 });
   };
 
   /* 每帧推进（宿主以 30Hz 调用） */
