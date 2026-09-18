@@ -28,11 +28,14 @@
         return typeof A.isMuted === 'function' ? A.isMuted() : false;
     }
 
-    /* ---------- 工具：10ms 去 click 的 setValueAtTime + ramp ---------- */
+    /* ---------- 工具：10ms 去 click 的 setValueAtTime + ramp ----------
+     * 注意：不能读 g.gain.value 当起点 —— 新建 GainNode 的默认值是 1.0，
+     * 会把"从静音起"变成"从满幅起"，在音头放出 10ms 满量程瞬态（爆音），
+     * 音量拉满时更会真的削波。这里一律从 1e-5 起爬。 */
     function safeGain(g, t, v) {
         try {
             g.gain.cancelScheduledValues(t);
-            g.gain.setValueAtTime(Math.max(1e-5, g.gain.value || 0), t);
+            g.gain.setValueAtTime(1e-5, t);
             g.gain.linearRampToValueAtTime(Math.max(1e-5, v), t + 0.01);
         } catch (_) { /* ignore */ }
     }
@@ -129,7 +132,7 @@
                     break;
                 }
                 case 'pickup': {
-                    // C-E-G-C arpeggio
+                    // C-E-G-C arpeggio（增益对齐旧版：拾取是高频正反馈，不能比占位版更轻）
                     const notes = [523.25, 659.25, 783.99, 1046.50];
                     for (let i = 0; i < 4; i++) {
                         const osc = ctx.createOscillator();
@@ -138,10 +141,10 @@
                         const t0 = now + i * 0.06;
                         osc.frequency.setValueAtTime(notes[i], t0);
                         g.gain.setValueAtTime(1e-5, t0);
-                        g.gain.linearRampToValueAtTime(0.30 * volScale, t0 + 0.01);
-                        g.gain.exponentialRampToValueAtTime(1e-5, t0 + 0.12);
+                        g.gain.linearRampToValueAtTime(0.46 * volScale, t0 + 0.01);
+                        g.gain.exponentialRampToValueAtTime(1e-5, t0 + 0.16);
                         osc.connect(g).connect(out);
-                        osc.start(t0); osc.stop(t0 + 0.14); track(osc); track(g);
+                        osc.start(t0); osc.stop(t0 + 0.18); track(osc); track(g);
                     }
                     break;
                 }
