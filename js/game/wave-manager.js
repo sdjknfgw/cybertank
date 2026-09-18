@@ -334,9 +334,11 @@
       const sides = ['top', 'bottom', 'left', 'right'];
       const OB = window.CT_OBSTACLE;
       for (let i = 0; i < n; i++) {
-        const side = sides[i % 4];
-        // 中央偏移（± 1/4 边长）
-        const jitter = (Math.random() - 0.5) * 0.5;
+        /* 随机选边（原先 i%4 固定循环 top→bottom→left→right，
+         * 第一只敌人永远从顶边出 → 玩家可蹲点守边。改为每只独立随机选边） */
+        const side = sides[(Math.random() * sides.length) | 0];
+        // 边上位置抖动 ±35% 边长（原 ±25%，进一步降低可预测性）
+        const jitter = (Math.random() - 0.5) * 0.7;
         let x, y;
         if (side === 'top') {
           x = MW / 2 + jitter * MW * 0.5;

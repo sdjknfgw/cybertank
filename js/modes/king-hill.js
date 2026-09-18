@@ -513,7 +513,11 @@
         this._gameOver(ranked[0] && ranked[0].type === 'player');
         return;
       }
-      /* 节间进入备战：第 2 节起给足 SHOP_TIME 购买时间（商店已对 king-hill 开放） */
+      /* 节间进入备战：第 2 节起给足 SHOP_TIME 购买时间（商店已对 king-hill 开放）
+       * 修复：原代码直接 _startPrepPhase() 而不递增 section —— section 永远为 1，
+       * 导致商店时间恒为 3s（玩家没时间购买）、据点位置永不切换、
+       * s.section >= SECTIONS 永假 → 3 节打不完、对局无限循环。 */
+      s.section += 1;
       this._startPrepPhase();
     },
 
@@ -593,9 +597,13 @@
       const OB_TOOL = global.CT_OBSTACLE;
       for (let i = 0; i < AI_COUNT; i++) {
         const raw = aiSpawn[i] || { x: 200 + i * 200, y: 200 };
-        let sp = raw;
+        /* 出生点随机化：固定 4 点基础上加 ±12% 世界尺寸抖动（findSafeSpawn 兜底防围死），
+         * 每节 AI 的出生位置都不同，避免玩家记住固定刷新点蹲守 */
+        const jx = raw.x + (Math.random() - 0.5) * WORLD_W * 0.24;
+        const jy = raw.y + (Math.random() - 0.5) * WORLD_H * 0.24;
+        let sp = { x: jx, y: jy };
         if (OB_TOOL && typeof OB_TOOL.findSafeSpawn === 'function') {
-          sp = OB_TOOL.findSafeSpawn(s.obstacles, WORLD_W, WORLD_H, raw.x, raw.y, 300);
+          sp = OB_TOOL.findSafeSpawn(s.obstacles, WORLD_W, WORLD_H, jx, jy, 300);
         }
         let ai;
         try {
@@ -823,12 +831,14 @@
       if (r < 2) return;
       ctx.save();
 
-      // 状态色：争夺中(橙红) / 已占领(绿) / 被某方占据(该方色) / 中立(冷蓝)
-      const holderColor = (h.holder && h.holder.color) || '#ffd700';
+      /* 状态色语义（防误导，不再借用坦克车身色）：
+       * 绿 = 玩家占据/计分中 · 红 = AI 占据/计分中 · 橙 = 多方争夺中 · 灰白 = 无人占据
+       * （旧逻辑任何一方占领计分都显示绿色、且占据色直接用车身色——AI 的红/绿/黄/紫
+       *   与状态色语义冲突，玩家难以分辨"是谁在得分"；中立冷蓝又与玩家青色皮肤相近） */
+      const holderIsPlayer = !!(h.holder && h.holder.type === 'player');
       const contested = this._hillContested(s, h);
-      const baseColor = contested ? '#ff7a1a'
-        : (h.scoring ? '#00ff9d'
-          : (h.holder ? holderColor : '#9fb4d8'));
+      const baseColor = contested ? '#ff9a3c'
+        : (h.holder ? (holderIsPlayer ? '#00ff9d' : '#ff3860') : '#c9d4e8');
 
       // 1) 地面占领区径向渐变填充
       const grad = ctx.createRadialGradient(sx, sy, r * 0.1, sx, sy, r);
@@ -857,11 +867,11 @@
       ctx.shadowBlur = h.scoring ? 28 : (contested ? 22 : 14);
       ctx.beginPath(); ctx.arc(sx, sy, r - 14 * z, 0, Math.PI * 2); ctx.stroke();
 
-      // 4) 占领进度弧（顺时针填充，类守望先锋占领槽）
+      // 4) 占领进度弧（顺时针填充，类守望先锋占领槽；颜色与占据方语义一致）
       const p = Math.min(1, (h.captureProg || 0) / HILL_CAPTURE);
       if (p > 0) {
         ctx.lineWidth = 6 * z;
-        ctx.strokeStyle = h.scoring ? '#00ff9d' : (contested ? '#ff9a3c' : '#00f0ff');
+        ctx.strokeStyle = contested ? '#ff9a3c' : (holderIsPlayer ? '#00f0ff' : '#ff3860');
         ctx.shadowColor = ctx.strokeStyle; ctx.shadowBlur = 18;
         ctx.beginPath();
         ctx.arc(sx, sy, r - 14 * z, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * p);
@@ -893,10 +903,10 @@
       }
       ctx.closePath(); ctx.fill();
 
-      // 7) 已占领：绿色脉冲光圈
+      // 7) 已占领计分中：脉冲光圈（颜色跟随占据方，玩家绿/AI 红）
       if (h.scoring) {
         const pulse = (Date.now() % 1400) / 1400;
-        ctx.strokeStyle = 'rgba(0,255,157,0.4)';
+        ctx.strokeStyle = this._rgba(baseColor, 0.4);
         ctx.lineWidth = 2; ctx.shadowBlur = 0;
         ctx.beginPath(); ctx.arc(sx, sy, r + pulse * 20 * z, 0, Math.PI * 2); ctx.stroke();
       }

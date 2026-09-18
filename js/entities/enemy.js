@@ -119,7 +119,7 @@
           color: '#ffffff',
           maxHp: 1.2,
           speed: 2.2,
-          fireRate: 2.0,
+          fireRate: 1.2,
           damage: 0.8,
           name: '普通敌军'
         },
@@ -128,7 +128,7 @@
           color: '#00ffa2',
           maxHp: 1.0,
           speed: 3.6,
-          fireRate: 2.8,
+          fireRate: 1.8,
           damage: 0.7,
           name: '快速敌军'
         },
@@ -137,7 +137,7 @@
           color: '#ff2a6d',
           maxHp: 3.0,
           speed: 2.0,
-          fireRate: 3.0,
+          fireRate: 2.0,
           damage: 1.2,
           name: '精英敌军'
         }
@@ -290,7 +290,8 @@
         } else {
           this._fireWindow -= dt;
           if (this._fireWindow <= 0) {
-            this._firePause = 0.3 + Math.random() * 0.6;
+            /* 停火加长（原 0.3~0.9s → 0.5~1.4s）：配合 fireRate 下调，整体攻击频率更克制 */
+            this._firePause = 0.5 + Math.random() * 0.9;
             this._fireWindow = 0.5 + Math.random() * 0.9;
           }
         }
