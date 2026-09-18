@@ -683,7 +683,8 @@
         try {
             BUS.on('combat:kill', () => { window6s.totalKills++; });
             BUS.on('weapon:fire', () => { window6s.totalBullets++; });
-            BUS.on('boss:spawn', () => { window6s.boss = true; });
+            /* 事件名对齐 wave-manager 实际 emit 的 'boss:spawned'（旧 'boss:spawn' 无人发，标志从未置位） */
+            BUS.on('boss:spawned', () => { window6s.boss = true; });
             BUS.on('boss:dead',  () => { window6s.boss = false; });
         } catch (_) {}
     }

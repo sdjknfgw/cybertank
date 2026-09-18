@@ -205,6 +205,7 @@
         if (enemy) {
           if (def.rank === 'boss') {
             this.activeBoss = enemy;
+            this._bossDeadEmitted = false;
             window.CT_BUS.emit('boss:spawned', { boss: enemy, wave: this.current });
             window.CT_BUS.emit('wave:spawnEnemy', { enemy: enemy, rank: 'boss', wave: this.current });
           } else {
@@ -216,6 +217,18 @@
 
       // 清理死亡敌军引用（延迟清理，防止 Set 遍历时修改）
       this._cleanupDead();
+
+      /* BOSS 死亡广播（仅一次）：bgm.js 退回战斗主题并重置 bossPhase、
+       * audio-ex.js 清理 intensity 的 boss 标志。此前 boss:dead 只有监听者、
+       * 全库无人 emit → boss 击杀后 BGM/强度状态无法正确复位。 */
+      if (this.activeBoss && this.activeBoss.hp <= 0) {
+        if (!this._bossDeadEmitted) {
+          this._bossDeadEmitted = true;
+          window.CT_BUS.emit('boss:dead', { boss: this.activeBoss, wave: this.current });
+        }
+      } else {
+        this._bossDeadEmitted = false;
+      }
 
       // 波次清空判定
       const bossDead = !this.activeBoss || this.activeBoss.hp <= 0;
@@ -236,26 +249,10 @@
         });
       }
 
-      // BOSS 阶段变化（每 50% HP 触发一次）
-      if (this.activeBoss && typeof this.activeBoss._phaseTrack === 'undefined') {
-        this.activeBoss._phaseTrack = 1.0; // 记录已触发的最高阈值
-      }
-      if (this.activeBoss && this.activeBoss.maxHp > 0) {
-        const pct = this.activeBoss.hp / this.activeBoss.maxHp;
-        const thresholds = [1.0, 0.75, 0.5, 0.25, 0.0];
-        for (let t = 0; t < thresholds.length; t++) {
-          if (pct <= thresholds[t] && this.activeBoss._phaseTrack > thresholds[t]) {
-            this.activeBoss._phaseTrack = thresholds[t];
-            window.CT_BUS.emit('boss:phaseChanged', {
-              boss: this.activeBoss,
-              phase: thresholds.length - 1 - t,
-              hpPct: pct,
-              wave: this.current
-            });
-            break;
-          }
-        }
-      }
+      /* BOSS 阶段事件已由 boss.js 内部统一管理（update 里按 ≤50%/≤25% 检查并 emit
+       * boss:phaseChanged{from,to}）。此处的旧阈值监听（75/50/25/0%）已删除——
+       * 它与内部阶段双轨并存：事件值矛盾、particles.js 监听不读字段导致
+       * 转阶段 glitch+震屏双重触发、75% 未转阶段也抖屏、0% 死亡瞬间再抖一次。 */
     },
 
     /**
