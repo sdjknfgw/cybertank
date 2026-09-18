@@ -555,8 +555,11 @@
             MODES.forEach((m, i) => {
                 const best = STORE.get(m.best, 0);
                 const tr = h('div', 'flex px-4 py-3 ' + (i % 2 ? 'bg-neon-cyan/5' : '') + ' items-center');
-                const rank = ['🥇', '🥈', '🥉', '4', '5'][i];
-                tr.appendChild(h('span', 'w-20 font-mono text-lg', rank));
+                const rkEl = h('span', 'w-20 font-mono text-lg font-bold', String(i + 1));
+                const rkc = { 1: '#ffd54a', 2: '#c7d0dd', 3: '#c98f5a' }[i + 1];
+                if (rkc) { rkEl.style.color = rkc; rkEl.style.textShadow = '0 0 8px ' + rkc + '99'; }
+                else rkEl.className += ' text-text-mid';
+                tr.appendChild(rkEl);
                 tr.appendChild(h('span', 'flex-1 flex items-center gap-2', '<span class="text-2xl">' + m.emoji + '</span>' + m.name));
                 tr.appendChild(h('span', 'flex-1 text-right font-mono text-glow-gold text-lg', best > 0 ? best.toLocaleString() : '— — —'));
                 tbl.appendChild(tr);
@@ -589,13 +592,22 @@
                 const wins = Number(r.wins) || 0, losses = Number(r.losses) || 0;
                 const total = wins + losses;
                 const winRate = total ? Math.round(wins * 100 / total) : 0;
+                const rank = r.rank || (i + 1);
                 const tr = h('div', 'flex px-4 py-2.5 items-center text-sm ' + (isMe ? 'bg-neon-gold/10' : (i % 2 ? 'bg-neon-cyan/5' : '')));
-                const medal = ['🥇', '🥈', '🥉'][(r.rank || (i + 1)) - 1] || String(r.rank || (i + 1));
-                tr.appendChild(h('span', 'w-14 text-center font-mono text-base', medal));
+                /* 排名：前三名金/银/铜发光数字，统一风格 */
+                const RK_COLORS = { 1: '#ffd54a', 2: '#c7d0dd', 3: '#c98f5a' };
+                const rkEl = h('span', 'w-14 text-center font-mono font-bold', '#' + rank);
+                const rc = RK_COLORS[rank];
+                if (rc) { rkEl.style.color = rc; rkEl.style.textShadow = '0 0 8px ' + PVP.hexA(rc, .6); rkEl.style.fontSize = '1.05rem'; }
+                else rkEl.className += ' text-text-mid';
+                tr.appendChild(rkEl);
                 tr.appendChild(h('span', 'flex-1 truncate' + (isMe ? ' text-neon-gold font-bold' : ' text-text-hi'), r.username || '???'));
-                tr.appendChild(h('span', 'w-28 font-bold',
-                    t ? (t.emoji + ' ' + t.name) : '—'));
-                if (t) tr.lastChild.style.color = t.color;
+                const tierEl = h('span', 'w-28 font-bold');
+                if (t) {
+                    tierEl.style.cssText = 'display:inline-flex;align-items:center;gap:5px;color:' + t.color;
+                    tierEl.innerHTML = PVP.tierIcon(t, 17) + '<span>' + t.name + '</span>';
+                } else tierEl.textContent = '—';
+                tr.appendChild(tierEl);
                 tr.appendChild(h('span', 'w-16 text-right font-mono text-glow-gold', String(rating)));
                 tr.appendChild(h('span', 'w-20 text-right font-mono', wins + '胜' + losses + '负'));
                 tr.appendChild(h('span', 'w-14 text-right font-mono', total ? (winRate + '%') : '—'));
@@ -629,8 +641,12 @@
             rows.forEach((r, i) => {
                 const isMe = !!(me && r.username === me);
                 const tr = h('div', 'flex px-4 py-2.5 items-center text-sm ' + (isMe ? 'bg-neon-gold/10' : (i % 2 ? 'bg-neon-cyan/5' : '')));
-                const medal = ['🥇', '🥈', '🥉'][(r.rank || (i + 1)) - 1] || String(r.rank || (i + 1));
-                tr.appendChild(h('span', 'w-14 text-center font-mono text-base', medal));
+                const rank = r.rank || (i + 1);
+                const rkEl = h('span', 'w-14 text-center font-mono font-bold', '#' + rank);
+                const rkc = { 1: '#ffd54a', 2: '#c7d0dd', 3: '#c98f5a' }[rank];
+                if (rkc) { rkEl.style.color = rkc; rkEl.style.textShadow = '0 0 8px ' + rkc + '99'; rkEl.style.fontSize = '1.05rem'; }
+                else rkEl.className += ' text-text-mid';
+                tr.appendChild(rkEl);
                 const nm = h('span', 'flex-1 flex items-center gap-1.5 overflow-hidden');
                 nm.appendChild(h('span', 'truncate' + (isMe ? ' text-neon-gold font-bold' : ' text-text-hi'), r.username || '???'));
                 if (r.victory) nm.appendChild(h('span', 'text-xs', '🏆'));
@@ -1031,21 +1047,38 @@
 
         container.appendChild(h('h2', 'font-tech text-[2rem] text-glow-cyan tracking-widest mb-1', '联机对战 1v1'));
         container.appendChild(h('div', 'text-text-lo text-xs font-mono mb-2', 'ONLINE · P2P 直连（WebRTC），无需额外服务器，双人浏览器实时对战'));
-        /* 我的段位：随登录账号展示 */
+        /* 我的段位卡：大徽章 + 段位名 + 积分战绩 + 升级进度条（突出段位） */
         const PVP = global.CT_PVP;
         const myProf = PVP && PVP.myProfile ? PVP.myProfile() : null;
         if (myProf) {
-            const tierLine = h('div', 'mb-4 text-base');
-            tierLine.innerHTML = '我的段位：' + PVP.tierBadge(myProf.rating, true) +
-                ' <span class="text-text-mid text-sm">· ' + myProf.wins + '胜 ' + myProf.losses + '负</span>';
+            const myTier = PVP.tierOf(myProf.rating);
             const nt = PVP.nextTierOf(myProf.rating);
-            if (nt) {
-                const gap = nt.min - myProf.rating;
-                tierLine.innerHTML += ' <span class="text-text-lo text-xs">（再赢约 ' + Math.max(1, Math.ceil(gap / 21)) + ' 场升 ' + nt.emoji + nt.name + '）</span>';
-            } else {
-                tierLine.innerHTML += ' <span class="text-xs" style="color:#ff2a6d">已达最高段位</span>';
-            }
-            container.appendChild(tierLine);
+            const card = h('div', 'neon-panel flex items-center gap-5 px-7 py-4', '');
+            corners(card);
+            card.style.cssText += 'min-width:420px;border-color:' + myTier.color + '55;background:linear-gradient(120deg,' +
+                PVP.hexA(myTier.color, .10) + ',rgba(10,16,36,.7) 55%);box-shadow:0 0 22px ' + PVP.hexA(myTier.color, .18);
+            card.innerHTML =
+                '<span style="display:inline-flex">' + PVP.tierIcon(myTier, 52) + '</span>' +
+                '<div class="flex flex-col gap-1 flex-1">' +
+                  '<div class="flex items-baseline gap-3">' +
+                    '<span class="font-tech tracking-widest" style="font-size:1.5rem;font-weight:700;color:' + myTier.color + ';text-shadow:0 0 12px ' + PVP.hexA(myTier.color, .55) + '">' + myTier.name + '</span>' +
+                    '<span class="font-mono text-glow-gold" style="font-size:1.35rem;font-weight:700">' + myProf.rating + '</span>' +
+                    '<span class="text-text-lo text-xs">分</span>' +
+                  '</div>' +
+                  '<div class="flex items-center gap-2 text-text-mid text-xs">' +
+                    '<span class="font-mono">' + myProf.wins + '胜 ' + myProf.losses + '负</span>' +
+                    '<span class="opacity-40">|</span>' +
+                    (nt
+                      ? '<span>距 <b style="color:' + nt.color + '">' + nt.name + '</b> 还差 <b class="font-mono" style="color:' + nt.color + '">' + (nt.min - myProf.rating) + '</b> 分（约 ' + Math.max(1, Math.ceil((nt.min - myProf.rating) / 21)) + ' 场）</span>'
+                      : '<span style="color:#ff2a6d;font-weight:700">已达最高段位 · ' + myTier.name + '</span>') +
+                  '</div>' +
+                  '<div style="height:7px;border-radius:4px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:2px">' +
+                    '<div style="height:100%;width:' + (nt
+                      ? Math.max(3, Math.min(100, Math.round((myProf.rating - Math.max(900, myTier.min)) / (nt.min - Math.max(900, myTier.min)) * 100)))
+                      : 100) + '%;border-radius:4px;background:linear-gradient(90deg,' + PVP.hexA(myTier.color, .5) + ',' + myTier.color + ');box-shadow:0 0 8px ' + PVP.hexA(myTier.color, .7) + '"></div>' +
+                  '</div>' +
+                '</div>';
+            container.appendChild(card);
         }
         container.appendChild(h('div', 'text-text-mid text-sm mb-6', '已选坦克：' + tankById(_state.tank).name + '（可在上一步的「坦克工坊」更换）'));
 
@@ -1107,10 +1140,13 @@
                 return;
             }
             rows.forEach((r) => {
+                const t = PVP && PVP.tierOf ? PVP.tierOf(r.rating || 1000) : null;
                 const row = h('div', 'flex items-center gap-3 px-3 py-2 rounded-lg bg-black/30 border border-neon-cyan/20');
+                if (t) row.style.borderColor = PVP.hexA(t.color, .35);
                 row.appendChild(h('span', 'font-mono text-glow-cyan tracking-widest', String(r.code || '').toUpperCase()));
                 row.appendChild(h('span', 'flex-1 truncate text-text-hi text-sm', r.name || '玩家'));
-                const badge = h('span', 'text-sm font-bold');
+                const badge = h('span', 'text-sm font-bold px-2.5 py-0.5 rounded-md');
+                badge.style.cssText += 'background:' + (t ? PVP.hexA(t.color, .12) : 'rgba(255,255,255,.06)');
                 badge.innerHTML = (PVP && PVP.tierBadge) ? PVP.tierBadge(r.rating, true) : (r.rating || 1000);
                 row.appendChild(badge);
                 const btn = h('button', 'ct-neon-btn btn-ghost !h-8 !px-4 !text-xs', '加入');

@@ -76,13 +76,11 @@
       tank: opts.tank || 'assault', skin: opts.skin || '#00e5ff',
     };
   }
-  /* 槽位 → 顶部计分/血条标签：段位emoji + 截断名（缺资料时回退 P1/P2） */
+  /* 槽位 → 血条标签：纯名称（顶部计分条另配 Canvas 段位徽章） */
   function slotLabel(i) {
     var p = profiles[i];
     if (!p) return 'P' + (i + 1);
-    var t = (global.CT_PVP && global.CT_PVP.tierOf) ? global.CT_PVP.tierOf(p.rating) : null;
-    var name = String(p.name || '').slice(0, 8);
-    return (t ? t.emoji + ' ' : '') + name;
+    return String(p.name || '').slice(0, 8);
   }
 
   /* ---------- 房间登记（建房模式）：把房间号+段位挂到服务器列表，心跳续期 ---------- */
@@ -224,14 +222,24 @@
 
     if (!started) {
       ctx.fillStyle = '#9fb0c8'; ctx.font = '20px system-ui'; ctx.textAlign = 'center';
-      ctx.fillText('等待对手加入… 房间号：' + (roomId || '------'), W / 2, H / 2);
-      // 我的段位（等待期展示，玩家与观战者都能看到）
+      ctx.fillText('等待对手加入… 房间号：' + (roomId || '------'), W / 2, H / 2 - 6);
+      // 我的段位（等待期展示，玩家与观战者都能看到）：徽章 + 名称 + 段位 + 战绩
       var my = myPvpProfile();
-      var myT = (global.CT_PVP && global.CT_PVP.tierOf) ? global.CT_PVP.tierOf(my.rating) : null;
-      if (myT) {
-        ctx.font = '15px system-ui'; ctx.fillStyle = myT.color;
-        ctx.fillText(myT.emoji + ' ' + my.name + ' · ' + myT.name + ' ' + my.rating +
-          ' · ' + my.wins + '胜' + my.losses + '负', W / 2, H / 2 + 34);
+      var P0 = global.CT_PVP || {};
+      if (P0.tierOf && P0.drawTierBadge) {
+        var myT = P0.tierOf(my.rating);
+        var bw = 190;
+        ctx.fillStyle = 'rgba(10,16,36,.75)';
+        ctx.fillRect(W / 2 - bw / 2, H / 2 + 12, bw, 54);
+        ctx.strokeStyle = P0.hexA ? P0.hexA(myT.color, .45) : myT.color;
+        ctx.lineWidth = 1; ctx.strokeRect(W / 2 - bw / 2, H / 2 + 12, bw, 54);
+        P0.drawTierBadge(ctx, W / 2 - bw / 2 + 32, H / 2 + 39, 30, my.rating);
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#e7ecf3'; ctx.font = 'bold 15px system-ui';
+        ctx.fillText(String(my.name).slice(0, 10), W / 2 - bw / 2 + 58, H / 2 + 33);
+        ctx.fillStyle = myT.color; ctx.font = 'bold 13px system-ui';
+        ctx.fillText(myT.name + ' ' + my.rating + '分 · ' + my.wins + '胜' + my.losses + '负', W / 2 - bw / 2 + 58, H / 2 + 53);
+        ctx.textAlign = 'center';
       }
       ctx.restore();
       drawHud(ctx, W, H);
@@ -322,22 +330,39 @@
 
   function drawHud(ctx, W, H) {
     if (!latest) return;
+    var P = global.CT_PVP || {};
     ctx.save();
     ctx.textAlign = 'center';
-    /* 顶部计分：双方名称 + 段位emoji（资料未到时回退 P1/P2） */
+    /* 顶部计分条：徽章+名称 | 大比分 | 名称+徽章（段位徽章紧贴双方名字） */
     var n0 = slotLabel(0), n1 = slotLabel(1);
-    ctx.textAlign = 'right';
-    ctx.fillStyle = '#00e5ff'; ctx.font = 'bold 17px system-ui';
-    ctx.fillText(n0, W / 2 - 46, 30);
+    var r0 = profiles[0] ? profiles[0].rating : null;
+    var r1 = profiles[1] ? profiles[1].rating : null;
+    // 中央比分胶囊
+    var capW = 96;
+    ctx.fillStyle = 'rgba(8,13,28,.72)';
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(W / 2 - capW / 2, 10, capW, 30, 8);
+    else ctx.rect(W / 2 - capW / 2, 10, capW, 30);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,229,255,.35)'; ctx.lineWidth = 1; ctx.stroke();
     ctx.textAlign = 'center';
-    ctx.fillStyle = '#e7ecf3'; ctx.font = 'bold 22px system-ui';
-    ctx.fillText(latest.scores[0] + ' : ' + latest.scores[1], W / 2, 30);
+    ctx.fillStyle = '#ffd54a'; ctx.font = 'bold 21px ui-monospace,monospace';
+    ctx.shadowColor = '#ffd54a'; ctx.shadowBlur = 8;
+    ctx.fillText(latest.scores[0] + ' : ' + latest.scores[1], W / 2, 31);
+    ctx.shadowBlur = 0;
+    // 左侧：徽章 + 名称（右对齐排到比分左侧）
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#00e5ff'; ctx.font = 'bold 16px system-ui';
+    ctx.fillText(n0, W / 2 - capW / 2 - 26, 31);
+    if (r0 != null && P.drawTierBadge) P.drawTierBadge(ctx, W / 2 - capW / 2 - 26 - ctx.measureText(n0).width - 11, 25, 18, r0);
+    // 右侧：名称 + 徽章
     ctx.textAlign = 'left';
-    ctx.fillStyle = '#ff2a6d'; ctx.font = 'bold 17px system-ui';
-    ctx.fillText(n1, W / 2 + 46, 30);
+    ctx.fillStyle = '#ff2a6d'; ctx.font = 'bold 16px system-ui';
+    ctx.fillText(n1, W / 2 + capW / 2 + 26, 31);
+    if (r1 != null && P.drawTierBadge) P.drawTierBadge(ctx, W / 2 + capW / 2 + 26 + ctx.measureText(n1).width + 11, 25, 18, r1);
     ctx.textAlign = 'center';
     ctx.font = 'bold 13px system-ui'; ctx.fillStyle = '#9fb0c8';
-    if (latest.round != null) ctx.fillText('第 ' + latest.round + ' 局 · BO5 先到 3 胜', W / 2, 50);
+    if (latest.round != null) ctx.fillText('第 ' + latest.round + ' 局 · BO5 先到 3 胜', W / 2, 52);
     // 双方 5 格血条（标签=名称+段位）
     drawHpBar(ctx, 16, H - 28, latest.tanks[0], '#00e5ff', n0);
     drawHpBar(ctx, W - 16 - 180, H - 28, latest.tanks[1], '#ff2a6d', n1);
@@ -355,37 +380,58 @@
     }
     ctx.restore();
   }
-  /* 首局观察卡：双方 名称/段位/积分/战绩 + VS（倒计时期间覆盖在竞技场上方） */
+  /* 首局观察卡：双方 名称/大段位徽章/积分/战绩 + VS（倒计时期间覆盖在竞技场上方） */
   function drawVsCard(ctx, W, H) {
     ctx.save();
-    ctx.fillStyle = 'rgba(4,7,16,0.72)';
+    ctx.fillStyle = 'rgba(4,7,16,0.78)';
     ctx.fillRect(0, 0, W, H);
     var P = global.CT_PVP || {};
-    function block(x, alignRight, color, prof, tag) {
-      var name = prof ? String(prof.name).slice(0, 12) : '……';
+    var pw = Math.min(300, W * 0.34), ph = 128, py = H / 2 - ph / 2 - 8;
+    function panel(x, alignRight, color, prof, tag) {
       var t = prof && P.tierOf ? P.tierOf(prof.rating) : null;
-      ctx.textAlign = alignRight ? 'right' : 'left';
-      ctx.fillStyle = color; ctx.font = 'bold 24px system-ui';
-      ctx.fillText(name + (tag || ''), x, H / 2 - 52);
+      var x0 = alignRight ? x - pw : x;
+      // 段位色侧边条 + 深色面板
+      ctx.fillStyle = 'rgba(10,16,36,.85)';
+      ctx.fillRect(x0, py, pw, ph);
+      if (t && P.hexA) {
+        ctx.fillStyle = P.hexA(t.color, .10);
+        ctx.fillRect(x0, py, pw, ph);
+        ctx.fillStyle = t.color;
+        ctx.fillRect(alignRight ? x0 + pw - 3 : x0, py, 3, ph);
+        ctx.strokeStyle = P.hexA(t.color, .4);
+      } else { ctx.strokeStyle = 'rgba(0,229,255,.3)'; }
+      ctx.lineWidth = 1; ctx.strokeRect(x0, py, pw, ph);
+      if (!prof) {
+        ctx.textAlign = 'center'; ctx.fillStyle = '#9fb0c8'; ctx.font = '14px system-ui';
+        ctx.fillText('段位资料获取中…', x0 + pw / 2, py + ph / 2);
+        return;
+      }
+      var left = !alignRight;
+      // 大徽章 + 名称/段位/战绩
+      var bx = left ? x0 + 40 : x0 + pw - 40;
+      if (P.drawTierBadge) P.drawTierBadge(ctx, bx, py + ph / 2, 46, prof.rating);
+      var tx = left ? x0 + 76 : x0 + pw - 76;
+      ctx.textAlign = left ? 'left' : 'right';
+      ctx.fillStyle = color; ctx.font = 'bold 22px system-ui';
+      ctx.fillText(String(prof.name).slice(0, 12) + (tag || ''), tx, py + 38);
       if (t) {
-        ctx.fillStyle = t.color; ctx.font = 'bold 16px system-ui';
-        ctx.fillText(t.emoji + ' ' + t.name + ' · ' + prof.rating + '分', x, H / 2 - 26);
+        ctx.fillStyle = t.color; ctx.font = 'bold 17px system-ui';
+        ctx.shadowColor = t.color; ctx.shadowBlur = 10;
+        ctx.fillText(t.name + ' · ' + prof.rating + '分', tx, py + 66);
+        ctx.shadowBlur = 0;
         ctx.fillStyle = '#9fb0c8'; ctx.font = '13px system-ui';
-        ctx.fillText('战绩 ' + (prof.wins || 0) + '胜 ' + (prof.losses || 0) + '负', x, H / 2 - 4);
-      } else {
-        ctx.fillStyle = '#9fb0c8'; ctx.font = '13px system-ui';
-        ctx.fillText('段位资料获取中…', x, H / 2 - 20);
+        ctx.fillText('战绩 ' + (prof.wins || 0) + '胜 ' + (prof.losses || 0) + '负', tx, py + 90);
       }
     }
-    block(W / 2 - 70, false, '#00e5ff', profiles[0], mySlot === 0 ? '（你）' : '');
-    block(W / 2 + 70, true, '#ff2a6d', profiles[1], mySlot === 1 ? '（你）' : '');
+    panel(W / 2 - 110, false, '#00e5ff', profiles[0], mySlot === 0 ? '（你）' : '');
+    panel(W / 2 + 110, true, '#ff2a6d', profiles[1], mySlot === 1 ? '（你）' : '');
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffd54a'; ctx.font = 'bold 44px system-ui';
     ctx.shadowColor = '#ffd54a'; ctx.shadowBlur = 18;
-    ctx.fillText('VS', W / 2, H / 2 - 18);
+    ctx.fillText('VS', W / 2, H / 2 - 8);
     ctx.shadowBlur = 0;
     ctx.fillStyle = '#7c89a0'; ctx.font = '14px system-ui';
-    ctx.fillText('⏱ 观察对手资料，倒计时结束后开战', W / 2, H / 2 + 92);
+    ctx.fillText('⏱ 观察对手资料，倒计时结束后开战', W / 2, H / 2 + 96);
     ctx.restore();
   }
   function drawHpBar(ctx, x, y, tank, color, label) {
@@ -617,9 +663,11 @@
         var P = global.CT_PVP;
         var nt = P && P.tierOf ? P.tierOf(res.user.pvpRating) : null;
         var delta = P && P.ratingDelta ? P.ratingDelta(win, rw, rl) : 0;
-        el.innerHTML = '段位 <b style="color:' + (nt ? nt.color : '#fff') + '">' +
-          (nt ? nt.emoji + ' ' + nt.name : '') + ' ' + res.user.pvpRating + '分</b>' +
-          ' <span style="color:' + (delta >= 0 ? '#7ef0a0' : '#ff7a9c') + '">' +
+        el.innerHTML = '段位 <span style="display:inline-flex;align-items:center;gap:5px;vertical-align:middle;color:' +
+          (nt ? nt.color : '#fff') + '">' +
+          (nt && P.tierIcon ? P.tierIcon(nt, 16) : '') +
+          '<b>' + (nt ? nt.name : '') + ' ' + res.user.pvpRating + '分</b></span>' +
+          ' <span style="color:' + (delta >= 0 ? '#7ef0a0' : '#ff7a9c') + ';font-weight:700">' +
           (delta >= 0 ? '+' : '') + delta + '</span> · 总战绩 ' +
           res.user.pvpWins + '胜 ' + res.user.pvpLosses + '负';
       } else {
@@ -647,9 +695,15 @@
       var p = profiles[slot];
       if (!p) return '<span style="color:' + color + '">P' + (slot + 1) + '</span>';
       var t = P && P.tierOf ? P.tierOf(p.rating) : null;
-      return '<span style="color:' + color + '">' + String(p.name).slice(0, 10) + '</span>' +
-        ' <span style="font-size:14px;color:' + (t ? t.color : '#9fb0c8') + '">' +
-        (t ? t.emoji + t.name + ' ' + p.rating : '') + '</span>';
+      if (!t || !P.tierIcon) {
+        return '<span style="color:' + color + '">' + String(p.name).slice(0, 10) + '</span>';
+      }
+      return '<span style="display:inline-flex;align-items:center;gap:8px;vertical-align:middle">' +
+        '<b style="color:' + color + ';font-size:17px">' + String(p.name).slice(0, 10) + '</b>' +
+        '<span style="display:inline-flex;align-items:center;gap:5px;font-size:14px;color:' + t.color + '">' +
+        P.tierIcon(t, 16) + t.name +
+        ' <span style="opacity:.85;font-family:ui-monospace,monospace">' + p.rating + '</span>' +
+        '</span></span>';
     }
     var head;
     if (scores) {
