@@ -266,13 +266,28 @@
      * }}
      */
     getEnemyCountReport: function () {
+      /* 下一波 Boss 预告（req3/req4）：按 current+1 推算；
+       * 每 5 波一个 Boss，Boss 名与技能组按轮换索引取自 CT_BOSS */
+      const BOSS_NS = window.CT_BOSS || null;
+      const nextWave = this.current + 1;
+      const nextIsBoss = (nextWave % 5 === 0);
+      let bossName = '烈焰巨兽';
+      let bossSkills = ['环形弹幕', '召唤护卫'];
+      if (nextIsBoss && BOSS_NS && Array.isArray(BOSS_NS.BOSS_NAMES)) {
+        const idx = ((nextWave / 5 - 1) % BOSS_NS.BOSS_NAMES.length + BOSS_NS.BOSS_NAMES.length) % BOSS_NS.BOSS_NAMES.length;
+        bossName = BOSS_NS.BOSS_NAMES[idx];
+        const kit = (BOSS_NS.BOSS_KITS && BOSS_NS.BOSS_KITS[idx]) || [];
+        const SK = BOSS_NS.BOSS_SKILLS || {};
+        const labels = kit.map(k => (SK[k] && SK[k].label) || k);
+        if (labels.length) bossSkills = labels;
+      }
       return {
         normal: this.plan.normalCount | 0,
         fast: this.plan.fastCount | 0,
         elite: this.plan.eliteCount | 0,
-        isBoss: this.isBossWave,
-        bossName: '烈焰巨兽',
-        bossSkills: ['喷射火焰弹', '召唤小兵']
+        isBoss: nextIsBoss,
+        bossName: bossName,
+        bossSkills: bossSkills
       };
     },
 
@@ -362,8 +377,11 @@
       if (!def) return null;
       if (def.rank === 'boss') {
         // BOSS：尝试使用 CT_BOSS（如未实现则 fallback 为精英）
-        if (window.CT_BOSS && typeof window.CT_BOSS.BossTank === 'function') {
-          return new window.CT_BOSS.BossTank({
+        /* boss.js 导出的类名是 Boss（BossTank 为旧名兼容）——此前只查 BossTank，
+         * 永远匹配不上 → BOSS 波全部退化成 fallback 精英，技能系统从未生效 */
+        var BossCtor = window.CT_BOSS && (window.CT_BOSS.Boss || window.CT_BOSS.BossTank);
+        if (typeof BossCtor === 'function') {
+          return new BossCtor({
             x: def.spawnPoint.x,
             y: def.spawnPoint.y,
             wave: this.current

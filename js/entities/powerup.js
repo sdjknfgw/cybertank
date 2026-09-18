@@ -377,14 +377,19 @@
     return this.alive;
   };
 
-  /** 内部拾取：apply + 事件 */
+  /** 内部拾取：玩家拾取 → 进道具栏待主动使用（按 1~5 释放）；
+   *  无 addInventory 的坦克（AI/兜底实体）退回拾取即生效。 */
   Powerup.prototype._pickup = function (tank) {
     if (!this.def) { this.alive = false; return; }
     try {
-      if (typeof this.def.apply === 'function') this.def.apply(tank);
+      if (tank && typeof tank.addInventory === 'function') {
+        tank.addInventory(this.def);
+      } else if (typeof this.def.apply === 'function') {
+        this.def.apply(tank);
+      }
       emitGlobal('powerup:picked', { tank: tank, def: this.def, powerupId: this.powerupId });
     } catch (e) {
-      if (typeof console !== 'undefined' && console.error) console.error('[Powerup.apply]', e);
+      if (typeof console !== 'undefined' && console.error) console.error('[Powerup.pickup]', e);
     }
     this.alive = false;
   };

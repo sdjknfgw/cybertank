@@ -549,7 +549,7 @@
         for (let j = 0; j < s.powerups.length; j++) {
           const p = s.powerups[j]; if (!p || !p.alive) continue;
           const pb = p.aabb || p._box; if (!pb) continue;
-          if (PHYS.aabb(tb, pb)) { try { if (typeof p.apply === 'function') p.apply(t); } catch (_) {} p.alive = false; BUS.emit('powerup:pickup', { target: t, powerup: p }); }
+          if (PHYS.aabb(tb, pb)) { try { if (typeof p._pickup === 'function') p._pickup(t); else if (p.def && typeof p.def.apply === 'function') p.def.apply(t); } catch (_) {} p.alive = false; BUS.emit('powerup:pickup', { target: t, powerup: p }); }
         }
       }
     },

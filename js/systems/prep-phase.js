@@ -410,6 +410,22 @@
     },
 
     /* ==========================================================
+     *  公有：跳过剩余准备期，立即开战
+     *  req2：商店关闭（手动 ✕ 或倒计时归零）时由 shop-ui 调用，
+     *  避免商店已关、准备期倒计时还在空转干等。
+     *  幂等：state!=='running'（未开始/已结束/正在收尾）时静默返回。
+     * ========================================================== */
+    skipToCombat: function () {
+      const self = this;
+      if (self.state !== 'running') return false;
+      try { self._endAndStartCombat(); } catch (e) {
+        console.warn('[CT_PREP] skipToCombat failed:', e);
+        return false;
+      }
+      return true;
+    },
+
+    /* ==========================================================
      *  增益选择之后重新开始下一准备期（流程衔接）
      * ========================================================== */
     afterBuffSelectionRestart: function (nextOptions) {

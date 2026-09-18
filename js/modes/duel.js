@@ -437,7 +437,14 @@
           const p = s.powerups[j]; if (!p || p.alive === false) continue;
           const pb = p.aabb || p._box; if (!pb) continue;
           if (PHYS.aabb(tb, pb)) {
-            try { if (typeof p.apply === 'function') p.apply(t); } catch (_) {}
+            /* P1 走 _pickup 进道具栏（按 1~5 使用）；
+             * P2 本地双人无数字键道具槽 → 拾取即生效，避免道具卡死在栏里 */
+            try {
+              if (t === s.p2) {
+                if (p.def && typeof p.def.apply === 'function') p.def.apply(t);
+              } else if (typeof p._pickup === 'function') p._pickup(t);
+              else if (p.def && typeof p.def.apply === 'function') p.def.apply(t);
+            } catch (_) {}
             p.alive = false;
             BUS.emit('powerup:pickup', { target: t, powerup: p });
           }

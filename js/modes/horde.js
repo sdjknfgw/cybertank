@@ -34,6 +34,10 @@
   const GlassWall = OB_NS.GlassWall  || null;
   const SpikeField= OB_NS.SpikeField || null;
   const RepairPad = OB_NS.RepairPad  || null;
+  /* 新地形 III：补给箱(击碎掉落道具/金币) / 能量屏障(挡弹不挡车) / 加速带(牵引力>1 提速) */
+  const Crate       = OB_NS.Crate       || null;
+  const EnergyFence = OB_NS.EnergyFence || null;
+  const BoostPad    = OB_NS.BoostPad    || null;
 
   const MAP_W = RENDER.world && RENDER.world.w ? RENDER.world.w : 2400;
   const MAP_H = RENDER.world && RENDER.world.h ? RENDER.world.h : 1600;
@@ -67,16 +71,22 @@
     '........BBBB.......GGGG.GGG.BBB.',
     '................................',
   ];
-  /* 地图扩大：基础模板 ×2 → 64×42（tile=64 → 4096×2688），布局密度不变、世界等比变大。
+  /* 每局随机生成地图模板（req6：地图方块随机生成，不再每局同一张图）：
+   * 32×21 基础网格随机生成（保留底部出生走廊）→ 放大 2 倍 → 64×42（tile=64 → 4096×2688）。
+   * 固定 _BASE_MAP 仅作为 generateRandomTemplate 不可用时的兜底。
    * 装饰：左上角用钢块拼出 "ccr"（5×5 点阵、scale=1 ≈ 1088×320px，不至于过大）。 */
-  const MAP_TEMPLATE = (function () {
-    let t = _BASE_MAP;
+  function buildMapTemplate() {
+    let t = null;
+    if (OB_NS && typeof OB_NS.generateRandomTemplate === 'function') {
+      try { t = OB_NS.generateRandomTemplate(32, 21, { keepBottom: true }); } catch (_) { t = null; }
+    }
+    if (!t || !t.length) t = _BASE_MAP;
     if (OB_NS && typeof OB_NS.enlargeTemplate === 'function') t = OB_NS.enlargeTemplate(t, 2);
     if (OB_NS && typeof OB_NS.stampText === 'function') {
       t = OB_NS.stampText(t, 'ccr', { row: 2, col: 3, ch: 'S', scale: 1, gap: 1, clear: true });
     }
     return t;
-  })();
+  }
   function createMapFromTemplate(template, tileSize) {
     tileSize = tileSize || 64;
     const cols = template[0].length;
@@ -104,6 +114,9 @@
         else if (ch === 'A' && GlassWall) obstacles.push(new GlassWall({ x, y, w: tileSize, h: tileSize }));
         else if (ch === 'X' && SpikeField) obstacles.push(new SpikeField({ x, y, w: tileSize, h: tileSize }));
         else if (ch === 'R' && RepairPad) obstacles.push(new RepairPad({ x, y, w: tileSize, h: tileSize }));
+        else if (ch === 'C' && Crate) obstacles.push(new Crate({ x, y, w: tileSize, h: tileSize }));
+        else if (ch === 'E' && EnergyFence) obstacles.push(new EnergyFence({ x, y, w: tileSize, h: tileSize }));
+        else if (ch === 'V' && BoostPad) obstacles.push(new BoostPad({ x, y, w: tileSize, h: tileSize }));
         else if ((ch === 'P' || ch === 'Q') && Portal) {
           portalSeq++;
           if (ch === 'P') {
@@ -128,7 +141,11 @@
       OB.scatterFill(obstacles, {
         tile: tileSize, cols: cols, rows: rows,
         density: 0.15, skipBorder: true, skipBottomRows: 2,
-        ctor: { WallBrick: WallBrick, WallSteel: WallSteel, Bush: Bush, Water: Water, Ice: Ice, Mud: Mud, GlassWall: GlassWall, SpikeField: SpikeField, RepairPad: RepairPad },
+        ctor: {
+          WallBrick: WallBrick, WallSteel: WallSteel, Bush: Bush, Water: Water, Ice: Ice, Mud: Mud,
+          GlassWall: GlassWall, SpikeField: SpikeField, RepairPad: RepairPad,
+          Crate: Crate, EnergyFence: EnergyFence, BoostPad: BoostPad
+        },
         rng: Math.random,
         // 保护底部中央的水晶基地（约 cols 12~17 × rows 15~18），避免方块压住基地
         skipRects: [{ c0: Math.floor(cols / 2) - 3, c1: Math.floor(cols / 2) + 2, r0: rows - 5, r1: rows - 2 }]
@@ -162,8 +179,8 @@
         const skin       = options.skin       || '#ff6bd6';
         const difficulty = options.difficulty || 'normal';
 
-        // 地图（先建图，玩家出生点防围死检测需要障碍数据）
-        const mapInfo = createMapFromTemplate(MAP_TEMPLATE, 64);
+        // 地图（先建图，玩家出生点防围死检测需要障碍数据）—— 每局随机模板（req6）
+        const mapInfo = createMapFromTemplate(buildMapTemplate(), 64);
         /* 世界尺寸 = 模板实际尺寸：地图铺满世界，四周不再留大面积空白 */
         const WORLD_W = mapInfo.w, WORLD_H = mapInfo.h;
         const OB_TOOL = global.CT_OBSTACLE;
@@ -297,10 +314,12 @@
           }
         } catch (_) {}
       }
-      /* 道具每帧 update（浮动动画 + 磁吸 + 拾取检测） */
+      /* 道具每帧 update（浮动动画 + 磁吸 + 拾取检测）
+       * Powerup.update 签名是 (dt, obstacles, tanks)——此前误传 (dt, s.tanks)，
+       * tanks 落在 obstacles 形参上、真 tanks 为 undefined → 拾取检测永不执行 */
       for (let i = 0; i < s.powerups.length; i++) {
         const p = s.powerups[i]; if (!p || !p.alive) continue;
-        try { if (typeof p.update === 'function') p.update(dt, s.tanks); } catch (_) {}
+        try { if (typeof p.update === 'function') p.update(dt, s.obstacles, s.tanks); } catch (_) {}
       }
       /* 技能随机掉落：战斗期每 pupInterval 秒在地图随机安全点刷一颗增益道具 */
       if (s.phase === 'COMBAT') {

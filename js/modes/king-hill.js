@@ -371,7 +371,9 @@
           const p = s.powerups[j]; if (!p || p.alive === false) continue;
           const pb = p.aabb || p._box; if (!pb) continue;
           if (PHYS.aabb(tb, pb)) {
-            try { if (typeof p.apply === 'function') p.apply(t); } catch (_) {}
+            /* Powerup 实例的拾取方法是 _pickup（旧代码误调不存在的 p.apply → 道具拾取无效果）。
+             * 玩家拾取统一进道具栏，按 1~5 主动使用 */
+            try { if (typeof p._pickup === 'function') p._pickup(t); else if (p.def && typeof p.def.apply === 'function') p.def.apply(t); } catch (_) {}
             p.alive = false;
             BUS.emit('powerup:pickup', { target: t, powerup: p });
           }

@@ -114,7 +114,8 @@
         if (!def && e.powerupId) { const PW = global.CT_POWERUP; def = PW && PW.PowerupDefs && PW.PowerupDefs[e.powerupId]; }
         if (!tank || tank.type !== 'player') return;
         const M = global.CT_UI_MODAL;
-        if (M && typeof M.showToast === 'function') M.showToast((def.emoji || def.icon || '⚡') + ' ' + (def.name || '增益') + ' · 持续 ' + def.duration + 's', 'info');
+        /* req1：道具拾取改为入道具栏主动使用 —— 提示语同步调整 */
+        if (M && typeof M.showToast === 'function') M.showToast((def.emoji || def.icon || '⚡') + ' ' + (def.name || '道具') + ' · 已入道具栏（按 1~5 使用）', 'info');
     }
 
     /* ---------- 通用：发光渐变条 ---------- */
@@ -388,8 +389,13 @@
         const wvLabel = h('div', 'font-tech text-[10px] text-text-lo tracking-widest', 'WAVE');
         wvCol.appendChild(wvLabel);
         wvCol.appendChild(h('div', 'font-mono text-glow-cyan text-2xl font-bold', '1 / 20'));
+        /* Boss 距离子行（req3：局内显示还有多少波到 Boss 战；仅无尽模式显示） */
+        const bossDist = h('div', 'font-tech text-[10px] tracking-widest', '');
+        bossDist.style.display = 'none';
+        wvCol.appendChild(bossDist);
         blCard.appendChild(wvCol);
         _dom.waveLabel = wvLabel;
+        _dom.bossDistTxt = bossDist;
         bl.appendChild(blCard);
         hud.appendChild(bl);
         _dom.scoreTxt = scCol.children[1]; _dom.comboTxt = cbCol.children[1]; _dom.waveTxt = wvCol.children[1];
@@ -883,6 +889,21 @@
                 const m = HUD._mode || '';
                 if (m === 'horde' || m === 'endless') {
                     _dom.waveTxt.textContent = cur + ' / ∞';
+                    /* Boss 距离显示（req3）：每 5 波一个 Boss 波；当前即为 Boss 波时红字提示 */
+                    if (_dom.bossDistTxt) {
+                        if (cur % 5 === 0) {
+                            _dom.bossDistTxt.style.display = '';
+                            _dom.bossDistTxt.textContent = '☠ BOSS 战';
+                            _dom.bossDistTxt.style.color = '#ff3860';
+                            _dom.bossDistTxt.style.textShadow = '0 0 6px rgba(255,56,96,0.8), 0 0 14px rgba(255,56,96,0.4)';
+                        } else {
+                            const dist = 5 - (cur % 5);
+                            _dom.bossDistTxt.style.display = '';
+                            _dom.bossDistTxt.textContent = '距BOSS战 ' + dist + ' 波';
+                            _dom.bossDistTxt.style.color = dist <= 1 ? '#ffd54a' : 'rgba(255,255,255,0.55)';
+                            _dom.bossDistTxt.style.textShadow = dist <= 1 ? '0 0 6px rgba(255,213,74,0.8)' : 'none';
+                        }
+                    }
                 } else if (m === 'duel') {
                     // 1v1：左下显示双方局分（BO5），不再显示“波次”
                     const p1s = (state.p1 && state.p1.score) || 0;
@@ -906,6 +927,8 @@
                         : 'WAVE';
                     if (_dom.waveLabel.textContent !== lbl) _dom.waveLabel.textContent = lbl;
                 }
+                /* Boss 距离行仅无尽模式显示，其余模式隐藏 */
+                if (_dom.bossDistTxt && m !== 'horde' && m !== 'endless') _dom.bossDistTxt.style.display = 'none';
             }
 
             // 据点核心耐久条（仅「据点守护」模式显示，req3/req4）

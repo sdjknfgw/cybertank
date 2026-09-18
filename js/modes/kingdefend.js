@@ -39,6 +39,10 @@
   const GlassWall  = OB_NS.GlassWall  || null;
   const SpikeField = OB_NS.SpikeField || null;
   const RepairPad  = OB_NS.RepairPad  || null;
+  /* 新地形 III：补给箱(击碎掉落道具/金币) / 能量屏障(挡弹不挡车) / 加速带(牵引力>1 提速) */
+  const Crate       = OB_NS.Crate       || null;
+  const EnergyFence = OB_NS.EnergyFence || null;
+  const BoostPad    = OB_NS.BoostPad    || null;
 
   // ---------- 常量 ----------
   const PREP_TIME = 3;            // 开局短准备（立刻进入战斗，波次倒计时随即启动 —— req2）
@@ -92,18 +96,25 @@
     '.MMM....GGR......BBB.BB...',
     '..........................',
   ];
-  /* 地图扩大：基础模板 ×2 → 52×32（tile=64 → 3328×2048），布局密度不变、世界等比变大。
+  /* 每局随机生成地图模板（req6：地图方块随机生成，不再每局同一张图）：
+   * 26×16 基础网格随机生成（中央留空放据点核心）→ 放大 2 倍 → 52×32（tile=64 → 3328×2048）。
+   * 世界尺寸与固定模板一致，WORLD_W/H 常量保持不变。
+   * 固定 _BASE_MAP 仅作为 generateRandomTemplate 不可用时的兜底。
    * 装饰：左上角用钢块拼出 "ccr"（5×5 点阵、scale=1 ≈ 1088×320px，不至于过大）。 */
-  const MAP_TEMPLATE = (function () {
-    let t = _BASE_MAP;
+  function buildMapTemplate() {
+    let t = null;
+    if (OB_NS && typeof OB_NS.generateRandomTemplate === 'function') {
+      try { t = OB_NS.generateRandomTemplate(26, 16, { keepCenter: true }); } catch (_) { t = null; }
+    }
+    if (!t || !t.length) t = _BASE_MAP;
     if (OB_NS && typeof OB_NS.enlargeTemplate === 'function') t = OB_NS.enlargeTemplate(t, 2);
     if (OB_NS && typeof OB_NS.stampText === 'function') {
       t = OB_NS.stampText(t, 'ccr', { row: 3, col: 3, ch: 'S', scale: 1, gap: 1, clear: true });
     }
     return t;
-  })();
-  const WORLD_W = MAP_TEMPLATE[0].length * 64;
-  const WORLD_H = MAP_TEMPLATE.length * 64;
+  }
+  const WORLD_W = _BASE_MAP[0].length * 2 * 64;
+  const WORLD_H = _BASE_MAP.length * 2 * 64;
 
   function createMapFromTemplate(template, tileSize) {
     tileSize = tileSize || 64;
@@ -129,6 +140,9 @@
         else if (ch === 'A' && GlassWall) obstacles.push(new GlassWall({ x, y, w: tileSize, h: tileSize }));
         else if (ch === 'X' && SpikeField) obstacles.push(new SpikeField({ x, y, w: tileSize, h: tileSize }));
         else if (ch === 'R' && RepairPad) obstacles.push(new RepairPad({ x, y, w: tileSize, h: tileSize }));
+        else if (ch === 'C' && Crate) obstacles.push(new Crate({ x, y, w: tileSize, h: tileSize }));
+        else if (ch === 'E' && EnergyFence) obstacles.push(new EnergyFence({ x, y, w: tileSize, h: tileSize }));
+        else if (ch === 'V' && BoostPad) obstacles.push(new BoostPad({ x, y, w: tileSize, h: tileSize }));
         else if ((ch === 'P' || ch === 'Q') && Portal) {
           portalSeq++;
           const p = new Portal({ id: 'kd_portal_' + portalSeq, pairId: null, x, y, w: tileSize, h: tileSize });
@@ -170,7 +184,7 @@
         const difficulty = options.difficulty || 'normal';
         const dcfg = getDiffCfg(difficulty);
 
-        const mapInfo = createMapFromTemplate(MAP_TEMPLATE, 64);
+        const mapInfo = createMapFromTemplate(buildMapTemplate(), 64);
         const OB_TOOL = global.CT_OBSTACLE;
         const safePt = (x, y) => {
           if (OB_TOOL && typeof OB_TOOL.findSafeSpawn === 'function') {
@@ -368,7 +382,9 @@
           const p = s.powerups[j]; if (!p || p.alive === false) continue;
           const pb = p.aabb || p._box; if (!pb) continue;
           if (PHYS.aabb(tb, pb)) {
-            try { if (typeof p.apply === 'function') p.apply(t); } catch (_) {}
+            /* Powerup 实例的拾取方法是 _pickup（旧代码误调不存在的 p.apply → 道具拾取无效果）。
+             * 现在玩家拾取统一进道具栏，按 1~5 主动使用 */
+            try { if (typeof p._pickup === 'function') p._pickup(t); else if (p.def && typeof p.def.apply === 'function') p.def.apply(t); } catch (_) {}
             p.alive = false;
             BUS.emit('powerup:pickup', { target: t, powerup: p });
           }

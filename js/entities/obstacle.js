@@ -76,9 +76,9 @@
     if (this._teleportCd > 0) this._teleportCd = Math.max(0, this._teleportCd - dt);
   };
   BaseObstacle.prototype.render = function () { /* 子类实现 */ };
-  /** 核弹/激光专用：强制摧毁（玻璃与砖同为可破坏材质） */
+  /** 核弹/激光专用：强制摧毁（玻璃/补给箱与砖同为可破坏材质） */
   BaseObstacle.prototype.destroyForced = function () {
-    if (this.type === 'steel' || this.type === 'brick' || this.type === 'glass') {
+    if (this.type === 'steel' || this.type === 'brick' || this.type === 'glass' || this.type === 'crate') {
       this.hp = 0;
       this.alive = false;
     }
@@ -752,10 +752,183 @@
   };
 
   /* =========================================================
+   * 11) Crate 补给箱：可破坏（hp=2），被摧毁时广播 obstacle:crateBroken，
+   *     由 main.js 接线掉落金币/道具 —— 「打箱子出奖励」。
+   * ========================================================= */
+  function Crate(opts) {
+    opts = opts || {};
+    opts.type = 'crate';
+    opts.hp = opts.hp == null ? 2 : opts.hp;
+    opts.blockTank = true;
+    opts.blockBullet = true;
+    BaseObstacle.call(this, opts);
+    var _alive = true;
+    Object.defineProperty(this, 'alive', {
+      get: function () { return _alive; },
+      set: function (v) {
+        if (!v && _alive) this._lootDrop();
+        _alive = v;
+      },
+      configurable: true,
+      enumerable: true
+    });
+  }
+  Crate.prototype = Object.create(BaseObstacle.prototype);
+  Crate.prototype.constructor = Crate;
+  Crate.prototype._lootDrop = function () {
+    try {
+      emitGlobal('obstacle:crateBroken', {
+        x: this._box.x + this._box.w / 2,
+        y: this._box.y + this._box.h / 2
+      });
+      var P = global.CT_PARTICLES;
+      if (P && typeof P.explode === 'function') {
+        var R = global.CT_RENDERER;
+        var sx = this._box.x + this._box.w / 2, sy = this._box.y + this._box.h / 2;
+        if (R && typeof R.worldToScreen === 'function') {
+          var pt = R.worldToScreen(sx, sy);
+          sx = pt.x; sy = pt.y;
+        }
+        P.explode(sx, sy, 1);
+      }
+    } catch (e) { /* noop */ }
+  };
+  Crate.prototype.render = function (ctx, camera) {
+    if (!this.alive) return;
+    var x = worldToScreenX(this._box.x, camera);
+    var y = worldToScreenY(this._box.y, camera);
+    var w = this._box.w * (camera ? (camera.scale || 1) : 1);
+    var h = this._box.h * (camera ? (camera.scale || 1) : 1);
+    ctx.save();
+    /* 军绿箱体 */
+    var g = ctx.createLinearGradient(x, y, x, y + h);
+    g.addColorStop(0, '#6f8f3f');
+    g.addColorStop(1, '#3f5a22');
+    ctx.fillStyle = g;
+    ctx.fillRect(x + 3, y + 3, w - 6, h - 6);
+    /* 金属包边 + 十字捆带 */
+    ctx.strokeStyle = '#2c4018';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 3, y + 3, w - 6, h - 6);
+    ctx.beginPath();
+    ctx.moveTo(x + w / 2, y + 3); ctx.lineTo(x + w / 2, y + h - 3);
+    ctx.moveTo(x + 3, y + h / 2); ctx.lineTo(x + w - 3, y + h / 2);
+    ctx.stroke();
+    /* 金色发光 loot 标记（呼吸） */
+    var pulse = 0.5 + 0.5 * Math.sin(this._t * 3.2);
+    ctx.shadowColor = '#ffd700';
+    ctx.shadowBlur = 6 + 10 * pulse;
+    ctx.fillStyle = '#ffd700';
+    ctx.font = 'bold ' + Math.round(h * 0.34) + 'px "Share Tech Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('¤', x + w / 2, y + h / 2);
+    ctx.restore();
+  };
+
+  /* =========================================================
+   * 12) EnergyFence 能量屏障：挡子弹不挡坦克（与水域相反），
+   *     不可破坏。战术掩体：人可穿过、弹过不去。
+   * ========================================================= */
+  function EnergyFence(opts) {
+    opts = opts || {};
+    opts.type = 'fence';
+    opts.hp = Infinity;
+    opts.blockTank = false;
+    opts.blockBullet = true;
+    BaseObstacle.call(this, opts);
+    this._dynRender = true;
+    _ensureDynHook();
+  }
+  EnergyFence.prototype = Object.create(BaseObstacle.prototype);
+  EnergyFence.prototype.constructor = EnergyFence;
+  EnergyFence.prototype.render = function (ctx, camera) {
+    if (!this.alive) return;
+    if (_isBakeCamera(camera)) return;
+    var x = worldToScreenX(this._box.x, camera);
+    var y = worldToScreenY(this._box.y, camera);
+    var w = this._box.w * (camera ? (camera.scale || 1) : 1);
+    var h = this._box.h * (camera ? (camera.scale || 1) : 1);
+    var pulse = 0.5 + 0.5 * Math.sin(this._t * 5.0);
+    ctx.save();
+    /* 半透明琥珀底 */
+    ctx.fillStyle = 'rgba(255,191,0,0.10)';
+    ctx.fillRect(x + 2, y + 2, w - 4, h - 4);
+    /* 能量网格线 */
+    ctx.strokeStyle = 'rgba(255,191,0,' + (0.45 + 0.35 * pulse).toFixed(3) + ')';
+    ctx.lineWidth = 1.5;
+    ctx.shadowColor = '#ffbf00';
+    ctx.shadowBlur = 6 + 8 * pulse;
+    var step = Math.max(10, w / 4);
+    for (var gx = x + step; gx < x + w - 2; gx += step) {
+      ctx.beginPath(); ctx.moveTo(gx, y + 3); ctx.lineTo(gx, y + h - 3); ctx.stroke();
+    }
+    for (var gy = y + step; gy < y + h - 2; gy += step) {
+      ctx.beginPath(); ctx.moveTo(x + 3, gy); ctx.lineTo(x + w - 3, gy); ctx.stroke();
+    }
+    /* 边框 */
+    ctx.strokeStyle = 'rgba(255,220,120,0.85)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 1.5, y + 1.5, w - 3, h - 3);
+    ctx.restore();
+  };
+
+  /* =========================================================
+   * 13) BoostPad 加速带：不挡车不挡弹，坦克压上牵引力 ×1.6（增速）。
+   *     与冰/泥取最小值不同，加速带走「取最大」通道（见 Tank._traction）。
+   * ========================================================= */
+  function BoostPad(opts) {
+    opts = opts || {};
+    opts.type = 'boost';
+    opts.hp = Infinity;
+    opts.blockTank = false;
+    opts.blockBullet = false;
+    opts.traction = 1.6;
+    BaseObstacle.call(this, opts);
+    this._dynRender = true;
+    _ensureDynHook();
+  }
+  BoostPad.prototype = Object.create(BaseObstacle.prototype);
+  BoostPad.prototype.constructor = BoostPad;
+  BoostPad.prototype.render = function (ctx, camera) {
+    if (!this.alive) return;
+    if (_isBakeCamera(camera)) return;
+    var x = worldToScreenX(this._box.x, camera);
+    var y = worldToScreenY(this._box.y, camera);
+    var w = this._box.w * (camera ? (camera.scale || 1) : 1);
+    var h = this._box.h * (camera ? (camera.scale || 1) : 1);
+    ctx.save();
+    /* 深色底 + 青色箭头列（向右流动，视觉暗示加速） */
+    ctx.fillStyle = 'rgba(0,90,110,0.30)';
+    ctx.fillRect(x + 2, y + 2, w - 4, h - 4);
+    var flow = (this._t * 40) % 18;
+    ctx.shadowColor = '#00ffd0';
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = '#00ffd0';
+    for (var ay = y + 6; ay < y + h - 8; ay += 16) {
+      for (var ax = x + 4 - flow; ax < x + w - 10; ax += 18) {
+        if (ax < x + 2) continue;
+        ctx.beginPath();
+        ctx.moveTo(ax, ay + 5);
+        ctx.lineTo(ax + 7, ay);
+        ctx.lineTo(ax + 14, ay + 5);
+        ctx.lineTo(ax + 7, ay + 5);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+    ctx.strokeStyle = 'rgba(0,255,208,0.65)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(x + 1.5, y + 1.5, w - 3, h - 3);
+    ctx.restore();
+  };
+
+  /* =========================================================
    * 根据字符串模板生成 2D 格子图
    * template: 二维字符串数组，或单字符串按行切分
    *   '1'=brick, '2'=steel, '3'=bush, '4'=water, '5'=ice, '6'=mud
-   *   'P'/'Q'=Portal（成对出现），'A'=玻璃砖, 'X'=尖刺区, 'R'=维修站，其余字符忽略
+   *   'P'/'Q'=Portal（成对出现），'A'=玻璃砖, 'X'=尖刺区, 'R'=维修站，
+   *   'C'=补给箱(可破坏掉落), 'E'=能量屏障(挡弹不挡车), 'V'=加速带，其余字符忽略
    * 返回: { obstacles, grid, cols, rows, tileSize }
    * ========================================================= */
   function createMap(template, tileSize) {
@@ -837,6 +1010,15 @@
             break;
           case 'R':
             ob = new RepairPad({ x: x, y: y, w: size, h: size });
+            break;
+          case 'C':
+            ob = new Crate({ x: x, y: y, w: size, h: size });
+            break;
+          case 'E':
+            ob = new EnergyFence({ x: x, y: y, w: size, h: size });
+            break;
+          case 'V':
+            ob = new BoostPad({ x: x, y: y, w: size, h: size });
             break;
           default:
             break;
@@ -1013,14 +1195,17 @@
       var x = c * tile, y = r * tile;
       var role = rng();
       var block = null;
-      if (role < 0.42) block = ctor.WallBrick && new ctor.WallBrick({ x: x, y: y, w: tile, h: tile });
-      else if (role < 0.50) block = ctor.WallSteel && new ctor.WallSteel({ x: x, y: y, w: tile, h: tile });
-      else if (role < 0.62) block = ctor.Bush && new ctor.Bush({ x: x, y: y, w: tile, h: tile });
-      else if (role < 0.74) block = ctor.Mud && new ctor.Mud({ x: x, y: y, w: tile, h: tile });
-      else if (role < 0.82) block = ctor.Ice && new ctor.Ice({ x: x, y: y, w: tile, h: tile });
-      else if (role < 0.86) block = ctor.Water && new ctor.Water({ x: x, y: y, w: tile, h: tile });
-      /* 新地形：玻璃砖中等概率；尖刺区/维修站低概率（放在开阔散布里，覆盖既有结构的空当） */
-      else if (role < 0.94) block = ctor.GlassWall && new ctor.GlassWall({ x: x, y: y, w: tile, h: tile });
+      if (role < 0.36) block = ctor.WallBrick && new ctor.WallBrick({ x: x, y: y, w: tile, h: tile });
+      else if (role < 0.44) block = ctor.WallSteel && new ctor.WallSteel({ x: x, y: y, w: tile, h: tile });
+      else if (role < 0.55) block = ctor.Bush && new ctor.Bush({ x: x, y: y, w: tile, h: tile });
+      else if (role < 0.65) block = ctor.Mud && new ctor.Mud({ x: x, y: y, w: tile, h: tile });
+      else if (role < 0.73) block = ctor.Ice && new ctor.Ice({ x: x, y: y, w: tile, h: tile });
+      else if (role < 0.77) block = ctor.Water && new ctor.Water({ x: x, y: y, w: tile, h: tile });
+      /* 新地形：玻璃砖/补给箱/能量屏障/加速带中等概率；尖刺区/维修站低概率 */
+      else if (role < 0.83) block = ctor.GlassWall && new ctor.GlassWall({ x: x, y: y, w: tile, h: tile });
+      else if (role < 0.88) block = ctor.Crate && new ctor.Crate({ x: x, y: y, w: tile, h: tile });
+      else if (role < 0.91) block = ctor.EnergyFence && new ctor.EnergyFence({ x: x, y: y, w: tile, h: tile });
+      else if (role < 0.94) block = ctor.BoostPad && new ctor.BoostPad({ x: x, y: y, w: tile, h: tile });
       else if (role < 0.97) block = ctor.SpikeField && new ctor.SpikeField({ x: x, y: y, w: tile, h: tile });
       else block = ctor.RepairPad && new ctor.RepairPad({ x: x, y: y, w: tile, h: tile });
       if (!block) block = ctor.WallBrick && new ctor.WallBrick({ x: x, y: y, w: tile, h: tile });
@@ -1197,6 +1382,106 @@
   }
 
   /* =========================================================
+   * 随机地图生成器：每局生成不同布局的字符模板
+   * 思路：空白网格上随机撒「结构块」（空心方阵/横竖墙/水池/草丛/冰面/
+   *       泥地/补给箱群/能量屏障/加速带/尖刺/维修站/传送门对），
+   *       保留边缘走廊与指定安全区（出生点/基地）。
+   * opts: { seed, keepCenter, keepBottom, portalPairs }
+   *   keepCenter: 中央 6x6 留空（kingdefend 据点核心用）
+   *   keepBottom: 底部 3 行、中央 8 列留空（horde 玩家出生走廊用）
+   * 返回: string[] 字符模板（可直接喂给 enlargeTemplate / createMap）
+   * ========================================================= */
+  function generateRandomTemplate(cols, rows, opts) {
+    opts = opts || {};
+    var rng = opts.rng || Math.random;
+    var R = function (a, b) { return a + Math.floor(rng() * (b - a + 1)); };
+    var grid = [];
+    var r, c;
+    for (r = 0; r < rows; r++) {
+      var line = '';
+      for (c = 0; c < cols; c++) line += '.';
+      grid.push(line.split(''));
+    }
+    /* 安全区判定：结构不压出生走廊 / 据点中心 */
+    function isSafe(rr, cc) {
+      if (rr < 1 || cc < 1 || rr >= rows - 1 || cc >= cols - 1) return false;
+      if (opts.keepCenter) {
+        var cR = Math.floor(rows / 2), cC = Math.floor(cols / 2);
+        if (Math.abs(rr - cR) <= 3 && Math.abs(cc - cC) <= 3) return false;
+      }
+      if (opts.keepBottom) {
+        if (rr >= rows - 3 && cc >= Math.floor(cols / 2) - 4 && cc <= Math.floor(cols / 2) + 3) return false;
+      }
+      return true;
+    }
+    /* 在随机位置放一个 w×h 的同色/结构斑块；hollow=只画边框 */
+    function placeBlob(w, h, ch, hollow) {
+      for (var t = 0; t < 12; t++) {
+        var rr = R(1, rows - 2 - h), cc = R(1, cols - 2 - w);
+        var ok = true;
+        for (var a = 0; a < h && ok; a++) {
+          for (var b = 0; b < w && ok; b++) {
+            if (!isSafe(rr + a, cc + b)) ok = false;
+            /* 结构之间留 1 格间隙，避免糊成大片 */
+            if (grid[rr + a][cc + b] !== '.') ok = false;
+          }
+        }
+        if (!ok) continue;
+        for (a = 0; a < h; a++) {
+          for (b = 0; b < w; b++) {
+            var edge = (a === 0 || b === 0 || a === h - 1 || b === w - 1);
+            if (!hollow || edge) grid[rr + a][cc + b] = ch;
+          }
+        }
+        return true;
+      }
+      return false;
+    }
+
+    /* --- 结构菜单（数量随机 1~2 组/类） --- */
+    var n;
+    n = R(3, 5); for (var i1 = 0; i1 < n; i1++) placeBlob(R(3, 5), R(3, 5), 'B', true);      // 砖房
+    n = R(2, 3); for (var i2 = 0; i2 < n; i2++) placeBlob(R(2, 4), R(2, 4), 'S', true);      // 钢堡
+    n = R(1, 2); for (var i3 = 0; i3 < n; i3++) placeBlob(R(3, 6), R(2, 3), 'W', false);     // 水池
+    n = R(2, 3); for (var i4 = 0; i4 < n; i4++) placeBlob(R(3, 6), R(2, 4), 'G', false);     // 草丛
+    n = R(1, 2); for (var i5 = 0; i5 < n; i5++) placeBlob(R(3, 5), R(2, 3), 'I', false);     // 冰面
+    n = R(1, 2); for (var i6 = 0; i6 < n; i6++) placeBlob(R(2, 4), R(2, 4), 'M', false);     // 泥沼
+    n = R(2, 4); for (var i7 = 0; i7 < n; i7++) placeBlob(R(1, 2), R(1, 2), 'C', false);     // 补给箱
+    n = R(1, 3); for (var i8 = 0; i8 < n; i8++) placeBlob(R(3, 6), 1, 'E', false);           // 能量屏障(横)
+    n = R(0, 1); for (var i9 = 0; i9 < n; i9++) placeBlob(1, R(3, 6), 'E', false);           // 能量屏障(竖)
+    n = R(1, 2); for (var i10 = 0; i10 < n; i10++) placeBlob(R(2, 4), R(2, 3), 'V', false);  // 加速带
+    n = R(1, 2); for (var i11 = 0; i11 < n; i11++) placeBlob(R(1, 2), R(1, 2), 'X', false);  // 尖刺
+    /* 维修站：全场 1~2 个 */
+    n = R(1, 2);
+    for (var i12 = 0; i12 < n; i12++) {
+      for (var t12 = 0; t12 < 16; t12++) {
+        var rr12 = R(2, rows - 3), cc12 = R(2, cols - 3);
+        if (isSafe(rr12, cc12) && grid[rr12][cc12] === '.') { grid[rr12][cc12] = 'R'; break; }
+      }
+    }
+    /* 传送门 1 对：两个门相距尽量远（各放地图一半） */
+    var pairs = opts.portalPairs != null ? opts.portalPairs : 1;
+    for (var pi = 0; pi < pairs; pi++) {
+      var pPlaced = false, qPlaced = false;
+      for (var tp = 0; tp < 20 && !pPlaced; tp++) {
+        var pr = R(2, rows - 3), pc = R(2, Math.floor(cols / 2) - 2);
+        if (isSafe(pr, pc) && grid[pr][pc] === '.') { grid[pr][pc] = 'P'; pPlaced = true; }
+      }
+      for (var tq = 0; tq < 20 && !qPlaced; tq++) {
+        var qr = R(2, rows - 3), qc = R(Math.floor(cols / 2) + 2, cols - 3);
+        if (isSafe(qr, qc) && grid[qr][qc] === '.') { grid[qr][qc] = 'Q'; qPlaced = true; }
+      }
+    }
+    /* 边缘零星点缀：低概率沿边放砖/钢，让边界不完全空旷 */
+    for (r = 2; r < rows - 2; r++) {
+      if (rng() < 0.10 && isSafe(r, 1) && grid[r][1] === '.') grid[r][1] = rng() < 0.5 ? 'B' : 'S';
+      if (rng() < 0.10 && isSafe(r, cols - 2) && grid[r][cols - 2] === '.') grid[r][cols - 2] = rng() < 0.5 ? 'B' : 'S';
+    }
+
+    return grid.map(function (rowArr) { return rowArr.join(''); });
+  }
+
+  /* =========================================================
    * 导出命名空间
    * ========================================================= */
   var CT_OBSTACLE = {
@@ -1204,6 +1489,7 @@
     enlargeTemplate: enlargeTemplate,
     stampText: stampText,
     GLYPHS_5x5: GLYPHS_5x5,
+    generateRandomTemplate: generateRandomTemplate,
     WallBrick: WallBrick,
     WallSteel: WallSteel,
     Bush: Bush,
@@ -1214,6 +1500,9 @@
     GlassWall: GlassWall,
     SpikeField: SpikeField,
     RepairPad: RepairPad,
+    Crate: Crate,
+    EnergyFence: EnergyFence,
+    BoostPad: BoostPad,
     createMap: createMap,
     findSafeSpawn: findSafeSpawn,
     scatterFill: scatterFill,

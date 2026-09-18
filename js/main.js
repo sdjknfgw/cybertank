@@ -510,6 +510,8 @@
                         for (let i = 0; i < gs.tanks.length; i++) {
                             const t = gs.tanks[i];
                             if (!t || !t.alive || t.type === info.owner) continue;
+                            /* Boss 布的雷只伤玩家：不误伤 Boss 自己与召唤的小兵 */
+                            if (info.owner === 'boss' && t.type !== 'player') continue;
                             const dx = (t.pos ? t.pos.x : 0) - x;
                             const dy = (t.pos ? t.pos.y : 0) - y;
                             if (dx * dx + dy * dy <= 48 * 48) {
@@ -552,6 +554,53 @@
                     const gs = global.CT_ENGINE && global.CT_ENGINE.gameState;
                     if (!gs || !Array.isArray(gs.obstacles)) return;
                     gs.obstacles.push(makeMine((d && d.x) || 0, (d && d.y) || 0, (d && d.damage) || 6, (d && d.owner) || 'player'));
+                } catch (e) { /* noop */ }
+            });
+
+            /* 补给箱破碎掉落：50% 掉随机道具 / 50% 掉金币（20~40，直接入账并飘字提示） */
+            BUS_.on('obstacle:crateBroken', (d) => {
+                try {
+                    const gs = global.CT_ENGINE && global.CT_ENGINE.gameState;
+                    if (!gs) return;
+                    const x = (d && d.x) || 0, y = (d && d.y) || 0;
+                    if (Math.random() < 0.5) {
+                        const PW = global.CT_POWERUP;
+                        if (PW && typeof PW.spawnRandom === 'function' && Array.isArray(gs.powerups)) {
+                            const p = PW.spawnRandom(x, y);
+                            if (p) gs.powerups.push(p);
+                        }
+                    } else {
+                        const coins = 20 + Math.floor(Math.random() * 21);
+                        let player = null;
+                        if (Array.isArray(gs.tanks)) {
+                            for (let i = 0; i < gs.tanks.length; i++) {
+                                const t = gs.tanks[i];
+                                if (t && t.alive && t.type === 'player') { player = t; break; }
+                            }
+                        }
+                        if (player) {
+                            player.coins = (player.coins || 0) + coins;
+                            try {
+                                const M_ = global.CT_UI_MODAL;
+                                if (M_ && typeof M_.showToast === 'function') M_.showToast('📦 补给箱 +' + coins + ' 金币', 'info');
+                            } catch (_) {}
+                        }
+                    }
+                    try { global.CT_AUDIO && global.CT_AUDIO.play && global.CT_AUDIO.play('pickup'); } catch (_) {}
+                } catch (e) { /* noop */ }
+            });
+
+            /* BOSS 技能施放提示（req4：技能系统可视化反馈） */
+            BUS_.on('boss:skillCast', (d) => {
+                try {
+                    const label = d && d.label;
+                    const boss = d && d.boss;
+                    if (!label) return;
+                    const M_ = global.CT_UI_MODAL;
+                    if (M_ && typeof M_.showToast === 'function') {
+                        M_.showToast('⚠ ' + ((boss && boss.name) || 'BOSS') + ' · ' + label, 'warn');
+                    }
+                    try { global.CT_AUDIO && global.CT_AUDIO.play && global.CT_AUDIO.play('skill'); } catch (_) {}
                 } catch (e) { /* noop */ }
             });
         })();

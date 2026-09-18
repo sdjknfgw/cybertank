@@ -153,7 +153,7 @@
     get: function () { return { x: this.pos.x - this._w / 2, y: this.pos.y - this._h / 2, w: this._w, h: this._h }; }
   });
 
-  /* 地形牵引力：冰 0.2 / 泥 0.6，取最小值 */
+  /* 地形牵引力：冰 0.2 / 泥 0.6 取最小值；加速带 1.6 走「取最大」通道（增速） */
   Tank.prototype._traction = function (obstacles) {
     var t = 1;
     if (!obstacles) return t;
@@ -161,9 +161,12 @@
     for (var i = 0; i < obstacles.length; i++) {
       var ob = obstacles[i];
       if (!ob || !ob.alive) continue;
-      if (ob.type !== 'ice' && ob.type !== 'mud') continue;
+      if (ob.type !== 'ice' && ob.type !== 'mud' && ob.type !== 'boost') continue;
       if (!aabbHit(me, ob.aabb)) continue;
-      if (ob.traction < t) t = ob.traction;
+      if (ob.type === 'boost') {
+        /* 加速带：牵引 >1 → speedActual 放大（不与冰/泥叠加，取加速优先） */
+        if (ob.traction > t) t = ob.traction;
+      } else if (ob.traction < t) t = ob.traction;
     }
     return t;
   };

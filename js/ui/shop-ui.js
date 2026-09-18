@@ -178,6 +178,7 @@
       /* 防重入：若上一实例的资源还活着（timer/observer/引擎句柄），先彻底清理。
        * 此前直接覆盖 S._tm 等属性，旧 interval 泄漏后其 rem 递减到 0 会
        * 调 S.close() 关掉正在展示的新商店 */
+      S._closing = false;  /* 重置关店守卫：否则 320ms 动画窗口内 close→open→close 会被误挡 */
       if (S._tm) { try { clearInterval(S._tm); } catch (e) {} S._tm = null; }
       if (S._ro2) { try { S._ro2.disconnect(); } catch (e) {} S._ro2 = null; }
       if (S._mfo) { try { S._mfo.disconnect(); } catch (e) {} S._mfo = null; }
@@ -273,9 +274,25 @@
       const ep = el('div', '', { padding: '10px', borderRadius: '10px', background: 'rgba(10,16,36,0.70)', border: '1px solid rgba(0,229,255,0.18)' });
       ep.innerHTML = '<div style="display:flex;align-items:center;gap:6px;font-weight:800;font-size:12px;color:var(--neon-cyan);font-family:\'JetBrains Mono\',monospace;"><span style="width:3px;height:14px;background:var(--neon-cyan);box-shadow:0 0 6px var(--neon-cyan);"></span>敌情预告 · 下一波</div>';
       const eL = el('div', '', { marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' });
-      const dots = boss ? [{ n: 'BOSS · 泰坦 ' + 'ΣΩ' [Math.floor(Math.random() * 2)], c: '#ff2bd6' }] : [{ n: '普通坦克 × 6', c: '#64748b' }, { n: '快速坦克 × 3', c: '#22d3ee' }, { n: '精英 × 2', c: '#a855f7' }];
+      /* 敌情数据（req3/req4）：优先读波次管理器真实数据 —— Boss 名与技能组
+       * 按下一个 Boss 波轮换索引计算，不再硬编码 💥🌀 两个技能标签 */
+      let rep = null;
+      try {
+        const WM = window.CT_WAVEMAN;
+        if (WM && typeof WM.getEnemyCountReport === 'function') rep = WM.getEnemyCountReport();
+      } catch (e) { }
+      const rN = (rep && rep.normal) || 6, rF = (rep && rep.fast) || 3, rE = (rep && rep.elite) || 2;
+      const dots = boss
+        ? [{ n: 'BOSS · ' + ((rep && rep.bossName) || '未知威胁'), c: '#ff2bd6' }]
+        : [{ n: '普通坦克 × ' + rN, c: '#64748b' }, { n: '快速坦克 × ' + rF, c: '#22d3ee' }, { n: '精英 × ' + rE, c: '#a855f7' }];
       dots.forEach(d => { const r = el('div', '', { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--text-mid)', fontFamily: 'JetBrains Mono,monospace' }); r.appendChild(el('span', '', { width: '8px', height: '8px', borderRadius: '50%', background: d.c, boxShadow: '0 0 6px ' + d.c })); r.appendChild(el('span', d.n)); eL.appendChild(r); });
-      if (boss) { const bh = el('div', '', { display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px', padding: '6px', borderRadius: '8px', background: 'rgba(255,43,214,0.08)', border: '1px solid rgba(255,43,214,0.32)' }); bh.innerHTML = '<div style="font-size:26px;filter:drop-shadow(0 0 6px rgba(255,43,214,0.8));">👹</div><div style="flex:1;"><div style="font-size:12px;font-weight:800;color:var(--neon-magenta);">BOSS 降临</div><div style="font-size:10px;color:var(--text-lo);display:flex;gap:6px;margin-top:4px;"><span title="全屏爆裂" style="border:1px solid rgba(255,43,214,0.4);padding:1px 5px;border-radius:999px;">💥</span><span title="召唤小兵" style="border:1px solid rgba(0,229,255,0.4);padding:1px 5px;border-radius:999px;">🌀</span></div></div>'; ep.appendChild(bh); }
+      if (boss) {
+        const skills = (rep && Array.isArray(rep.bossSkills) && rep.bossSkills.length) ? rep.bossSkills : ['环形弹幕', '召唤护卫'];
+        const chips = skills.slice(0, 4).map(s => '<span title="BOSS 技能" style="border:1px solid rgba(255,43,214,0.4);padding:1px 5px;border-radius:999px;white-space:nowrap;">' + s + '</span>').join('');
+        const bh = el('div', '', { display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px', padding: '6px', borderRadius: '8px', background: 'rgba(255,43,214,0.08)', border: '1px solid rgba(255,43,214,0.32)' });
+        bh.innerHTML = '<div style="font-size:26px;filter:drop-shadow(0 0 6px rgba(255,43,214,0.8));">👹</div><div style="flex:1;"><div style="font-size:12px;font-weight:800;color:var(--neon-magenta);">BOSS 降临</div><div style="font-size:10px;color:var(--text-lo);display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;">' + chips + '</div></div>';
+        ep.appendChild(bh);
+      }
       ep.appendChild(eL); sd.appendChild(ep);
       // 已购道具 5 格 (5×48)
       const invP = el('div', '', { padding: '10px', borderRadius: '10px', background: 'rgba(10,16,36,0.70)', border: '1px solid rgba(0,229,255,0.18)' });
@@ -394,19 +411,33 @@
       gd.querySelectorAll('[data-cat]').forEach(n => { n.style.display = n.getAttribute('data-cat') === cat ? '' : 'none'; });
     },
     close() {
+      /* 重入保护：close → skipToCombat → prep._endAndStartCombat 会再次回调
+       * SHOP_UI.close()，二次进入直接返回，避免 shop:closed 双发与 done 双执行 */
+      if (S._closing) return;
+      S._closing = true;
       const C = S._ctx, oC = S._oc, root = S._ro;
       const gen = S._gen; // 记录本次关闭对应的实例代数
       if (S._tm) { clearInterval(S._tm); S._tm = null; }
-      if (S._ro2) { try { S._ro2.disconnect(); } catch (e) { } S._ro2 = null; }
-      if (S._mfo) { try { S._mfo.disconnect(); } catch (e) { } S._mfo = null; }
+      if (S._ro2) { try { S._ro2.disconnect(); } catch (e) { } } S._ro2 = null;
+      if (S._mfo) { try { S._mfo.disconnect(); } catch (e) { } } S._mfo = null;
       try { bus.emit && bus.emit('shop:closed'); } catch (e) { }
+      /* req2：商店关闭（手动 ✕ / 倒计时归零）→ 立即开战，不再空等准备期倒计时。
+       * 幂等保护：prep-phase._endAndStartCombat 内部回调 SHOP_UI.close() 时
+       * prep.state 已置 'ending'，skipToCombat 直接返回 false，不会递归。 */
+      if (C) {
+        try {
+          const PREP = window.CT_PREP;
+          if (PREP && typeof PREP.skipToCombat === 'function') PREP.skipToCombat();
+        } catch (e) { }
+      }
       S._ctx = S._oc = S._fx = S._ro = null;
       /* done 延迟 320ms 执行。期间若 S.open() 已开新店（代数变化），
        * 绝不能清空 root —— 否则新商店刚弹出就被清掉（闪退） */
       const done = () => {
-        if (gen !== S._gen) return;
+        if (gen !== S._gen) { S._closing = false; return; }
         if (C && C.fx) try { C.fx.destroy(); } catch (e) { }
         if (root) { root.innerHTML = ''; root.style.display = 'none'; root.classList.add('hidden'); }
+        S._closing = false;
         if (typeof oC === 'function') try { oC(); } catch (e) { }
       };
       if (root) {
@@ -415,7 +446,7 @@
         if (mk) { mk.style.transition = 'opacity 280ms ease'; mk.style.opacity = '0'; }
         if (pn) { pn.style.transition = 'transform 300ms ease, opacity 300ms ease'; pn.style.transform = 'scale(0.88)'; pn.style.opacity = '0'; }
         setTimeout(done, 320);
-      } else done();
+      } else { S._closing = false; done(); }
     },
     hide() { S.close(); },
   };
